@@ -1,68 +1,115 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView, 
-  Platform
+  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Package, CheckCircle, Calendar, ChevronLeft } from 'lucide-react-native';
+import { Package, CheckCircle, Calendar, ChevronLeft, ShoppingCart, Send } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function RiderHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const history = [
-    {
-      id: "1",
-      service: "Pabili - Jollibee",
-      customer: "Juan Dela Cruz",
-      date: "May 7, 2026",
-      time: "2:30 PM",
-      amount: "₱100",
-      status: "Completed",
-    },
-    {
-      id: "2",
-      service: "Pasugo - Cash In",
-      customer: "Maria Santos",
-      date: "May 7, 2026",
-      time: "1:15 PM",
-      amount: "₱80",
-      status: "Completed",
-    },
-    {
-      id: "3",
-      service: "Pahatod - Documents",
-      customer: "Pedro Cruz",
-      date: "May 6, 2026",
-      time: "5:45 PM",
-      amount: "₱120",
-      status: "Completed",
-    },
-    {
-      id: "4",
-      service: "Pabili - Groceries",
-      customer: "Anna Reyes",
-      date: "May 6, 2026",
-      time: "3:20 PM",
-      amount: "₱150",
-      status: "Completed",
-    },
-    {
-      id: "5",
-      service: "Pakuha - Package",
-      customer: "Jose Garcia",
-      date: "May 5, 2026",
-      time: "10:00 AM",
-      amount: "₱90",
-      status: "Completed",
-    },
-  ];
+  const [history, setHistory] = useState<any[]>([]);
+  const [lifetimeCount, setLifetimeCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchRiderHistory = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/rider`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        const completedMissions = resData.data.orders.filter(
+          (order: any) => order.status === 'COMPLETED'
+        );
+        
+        // Sort chronologically descending (newest first)
+        completedMissions.sort(
+          (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        setHistory(completedMissions);
+        setLifetimeCount(completedMissions.length);
+      } else {
+        Alert.alert('Error', resData.error || 'Failed to fetch work history.');
+      }
+    } catch (err) {
+      console.error('Error fetching rider history:', err);
+      Alert.alert('Error', 'Unable to connect to the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRiderHistory();
+  }, []);
+
+  const formatDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      const optionsDate: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+      const optionsTime: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
+      return `${d.toLocaleDateString('en-US', optionsDate)} • ${d.toLocaleTimeString('en-US', optionsTime)}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getServiceLabel = (item: any) => {
+    const details = item.details || {};
+    const isRide = item.type === 'PAHATOD' && details.rideService === true;
+    const serviceName = isRide ? 'FMU RIDE' : item.type;
+
+    if (item.type === 'PABILI') {
+      const firstItem = details.itemsList?.[0]?.name || 'Items';
+      return `Pabili - ${firstItem}`;
+    }
+    if (item.type === 'PASUGO') {
+      const desc = details.taskDetails || 'Errand';
+      return `Pasugo - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    if (item.type === 'PAHATOD') {
+      const desc = details.itemDescription || 'Delivery';
+      return `${serviceName} - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    if (item.type === 'PAKUHA') {
+      const desc = details.packageDetails || 'Package';
+      return `Pakuha - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    return `${serviceName} Errand`;
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#0047AB" />
+        <Text style={styles.loadingText}>Syncing mission history...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -98,7 +145,7 @@ export default function RiderHistoryScreen() {
             <View style={styles.achievementLeft}>
               <Text style={styles.achievementLabel}>LIFETIME ACHIEVEMENT</Text>
               <View style={styles.tripsRow}>
-                <Text style={styles.tripsCount}>185</Text>
+                <Text style={styles.tripsCount}>{lifetimeCount}</Text>
                 <Text style={styles.tripsLabel}>trips completed</Text>
               </View>
             </View>
@@ -109,36 +156,62 @@ export default function RiderHistoryScreen() {
           </View>
 
           {/* History entries */}
-          <View style={styles.listContainer}>
-            {history.map((item) => (
-              <View key={item.id} style={styles.historyCard}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <View style={styles.iconWrapper}>
-                      <Package size={20} color="#D4AF37" />
-                    </View>
-                    <View>
-                      <Text style={styles.historyService}>{item.service}</Text>
-                      <Text style={styles.historyCustomer}>Customer: {item.customer}</Text>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.payoutBadge}>
-                    <Text style={styles.payoutText}>{item.amount}</Text>
-                  </View>
-                </View>
+          {history.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Package size={48} color="#9CA3AF" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyTitle}>No completed errands yet</Text>
+              <Text style={styles.emptyDesc}>
+                Deliver some active missions to Customer coordinates to register your success logs!
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.listContainer}>
+              {history.map((item) => {
+                const details = item.details || {};
+                const isPabili = item.type === 'PABILI';
+                const isPasugo = item.type === 'PASUGO';
+                const isPakuha = item.type === 'PAKUHA';
+                const isRide = item.type === 'PAHATOD' && details.rideService === true;
 
-                <View style={styles.cardFooter}>
-                  <View style={styles.timeDetails}>
-                    <Calendar size={12} color="#9CA3AF" />
-                    <Text style={styles.timeText}>{item.date} • {item.time}</Text>
+                return (
+                  <View key={item.id} style={styles.historyCard}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.cardHeaderLeft}>
+                        <View style={[
+                          styles.iconWrapper,
+                          isPabili && styles.pabiliIconBg,
+                          isPasugo && styles.pasugoIconBg,
+                          isPakuha && styles.pakuhaIconBg,
+                          isRide && styles.rideIconBg
+                        ]}>
+                          {isPabili ? <ShoppingCart size={18} color="#EA580C" /> :
+                           isPasugo ? <Send size={18} color="#2563EB" /> :
+                           <Package size={18} color="#9333EA" />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.historyService}>{getServiceLabel(item)}</Text>
+                          <Text style={styles.historyCustomer}>Customer: {item.customer?.name || 'FetchMeUp Client'}</Text>
+                        </View>
+                      </View>
+                      
+                      <View style={styles.payoutBadge}>
+                        <Text style={styles.payoutText}>₱{parseFloat(item.deliveryFee || '0').toFixed(2)}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.cardFooter}>
+                      <View style={styles.timeDetails}>
+                        <Calendar size={12} color="#9CA3AF" />
+                        <Text style={styles.timeText}>{formatDate(item.createdAt)}</Text>
+                      </View>
+                      
+                      <Text style={styles.successTag}>SUCCESS</Text>
+                    </View>
                   </View>
-                  
-                  <Text style={styles.successTag}>SUCCESS</Text>
-                </View>
-              </View>
-            ))}
-          </View>
+                );
+              })}
+            </View>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -149,6 +222,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
+  },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#4B5563',
+    fontWeight: '600',
   },
   header: {
     backgroundColor: '#050A18',
@@ -261,6 +346,34 @@ const styles = StyleSheet.create({
   listContainer: {
     gap: 16,
   },
+  emptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  emptyDesc: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: 16,
+  },
   historyCard: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -293,6 +406,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(212, 175, 55, 0.3)',
+  },
+  pabiliIconBg: {
+    backgroundColor: 'rgba(234, 88, 12, 0.08)',
+    borderColor: 'rgba(234, 88, 12, 0.2)',
+  },
+  pasugoIconBg: {
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderColor: 'rgba(37, 99, 235, 0.2)',
+  },
+  pakuhaIconBg: {
+    backgroundColor: 'rgba(147, 51, 234, 0.08)',
+    borderColor: 'rgba(147, 51, 234, 0.2)',
+  },
+  rideIconBg: {
+    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    borderColor: 'rgba(212, 175, 55, 0.2)',
   },
   historyService: {
     fontSize: 15,

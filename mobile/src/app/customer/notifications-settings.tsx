@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView,
-  Switch
+  Switch,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Bell, Smartphone, Mail, MessageSquare, Package } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function NotificationsSettingsScreen() {
   const router = useRouter();
@@ -24,9 +28,79 @@ export default function NotificationsSettingsScreen() {
     chatMessages: true,
   });
 
-  const toggleSetting = (key: keyof typeof settings) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchSettings = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/api/auth/settings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        setSettings(prev => ({
+          ...prev,
+          ...(resData.settings || {})
+        }));
+      }
+    } catch (e) {
+      console.error('Error fetching settings:', e);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const toggleSetting = async (key: keyof typeof settings) => {
+    const updatedSettings = {
+      ...settings,
+      [key]: !settings[key]
+    };
+    
+    // Optimistic UI update
+    setSettings(updatedSettings);
+
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/auth/settings`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ settings: updatedSettings })
+      });
+      const resData = await response.json();
+
+      if (!response.ok || !resData.success) {
+        // Rollback on failure
+        setSettings(settings);
+        Alert.alert('Notice', 'Failed to update preferences on server.');
+      }
+    } catch (e) {
+      // Rollback on connection error
+      setSettings(settings);
+      Alert.alert('Connection Error', 'Failed to save changes. Please try again.');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#0047AB" />
+        <Text style={styles.loadingText}>Syncing preferences...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -177,6 +251,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
+  },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
   },
   header: {
     backgroundColor: '#0047AB',

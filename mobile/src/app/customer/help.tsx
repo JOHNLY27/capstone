@@ -5,6 +5,8 @@ import {
   View, 
   TouchableOpacity, 
   ScrollView,
+  Linking,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, MessageCircle, PhoneCall, Mail, ChevronRight, FileText } from 'lucide-react-native';
@@ -21,6 +23,21 @@ export default function HelpScreen() {
     "How to apply a promo code?",
     "Payment methods supported",
   ];
+
+  const handlePhoneCall = () => {
+    Linking.openURL('tel:+63900000000');
+  };
+
+  const handleEmailSupport = () => {
+    Linking.openURL('mailto:support@fetchmeup.com?subject=FetchMeUp%20Support%20Request');
+  };
+
+  const handleFAQPress = (faq: string) => {
+    Alert.alert(
+      faq,
+      "Our support agents can assist with this in detail! Tap 'Live Chat' above to start a real-time conversation directly with the system administrator."
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -51,7 +68,11 @@ export default function HelpScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>CONTACT US</Text>
           <View style={styles.contactGrid}>
-            <TouchableOpacity style={styles.contactCard} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.contactCard} 
+              activeOpacity={0.8}
+              onPress={() => router.push('/customer/support-chat' as any)}
+            >
               <View style={[styles.contactIcon, { backgroundColor: 'rgba(0, 71, 171, 0.1)' }]}>
                 <MessageCircle size={24} color="#0047AB" />
               </View>
@@ -59,7 +80,11 @@ export default function HelpScreen() {
               <Text style={styles.contactSub}>Usually responds in 5m</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.contactCard} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.contactCard} 
+              activeOpacity={0.8}
+              onPress={handlePhoneCall}
+            >
               <View style={[styles.contactIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
                 <PhoneCall size={24} color="#10B981" />
               </View>
@@ -67,7 +92,11 @@ export default function HelpScreen() {
               <Text style={styles.contactSub}>24/7 Support Line</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.contactCard, { width: '100%' }]} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={[styles.contactCard, { width: '100%' }]} 
+              activeOpacity={0.8}
+              onPress={handleEmailSupport}
+            >
               <View style={[styles.contactIcon, { backgroundColor: 'rgba(212, 175, 55, 0.1)' }]}>
                 <Mail size={24} color="#D4AF37" />
               </View>
@@ -83,7 +112,11 @@ export default function HelpScreen() {
           <View style={styles.card}>
             {faqs.map((faq, index) => (
               <View key={index}>
-                <TouchableOpacity style={styles.faqRow} activeOpacity={0.7}>
+                <TouchableOpacity 
+                  style={styles.faqRow} 
+                  activeOpacity={0.7}
+                  onPress={() => handleFAQPress(faq)}
+                >
                   <Text style={styles.faqText}>{faq}</Text>
                   <ChevronRight size={20} color="#C7C7CC" />
                 </TouchableOpacity>
@@ -97,7 +130,11 @@ export default function HelpScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>LEGAL</Text>
           <View style={styles.card}>
-            <TouchableOpacity style={styles.faqRow} activeOpacity={0.7}>
+            <TouchableOpacity 
+              style={styles.faqRow} 
+              activeOpacity={0.7}
+              onPress={() => Alert.alert("Terms of Service", "By using FetchMeUp, you agree to our standard terms of logistics, passenger safety, and payment processing rules.")}
+            >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <FileText size={20} color="#6B7280" />
                 <Text style={styles.faqText}>Terms of Service</Text>
@@ -105,7 +142,11 @@ export default function HelpScreen() {
               <ChevronRight size={20} color="#C7C7CC" />
             </TouchableOpacity>
             <View style={styles.divider} />
-            <TouchableOpacity style={styles.faqRow} activeOpacity={0.7}>
+            <TouchableOpacity 
+              style={styles.faqRow} 
+              activeOpacity={0.7}
+              onPress={() => Alert.alert("Privacy Policy", "FetchMeUp is committed to securing user information, tracking logs, and G-Cash simulated financial tokens.")}
+            >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <FileText size={20} color="#6B7280" />
                 <Text style={styles.faqText}>Privacy Policy</Text>

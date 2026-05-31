@@ -10,7 +10,9 @@ import {
   Platform, 
   ScrollView,
   Modal,
-  FlatList
+  FlatList,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,12 +20,15 @@ import { User, Mail, Lock, Phone, MapPin, Eye, EyeOff, ArrowLeft, ChevronDown, F
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { getBarangays } from '../../data/philippines';
+import { API_URL } from '../../constants/api';
+import { authStore } from '../../utils/auth-store';
 
 export default function RiderSignupScreen() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [licenseImageUri, setLicenseImageUri] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     fullName: '',
@@ -48,7 +53,7 @@ export default function RiderSignupScreen() {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (permissionResult.granted === false) {
-      alert("Permission to access gallery is required to upload your license!");
+      Alert.alert("Permission Required", "Permission to access gallery is required to upload your license!");
       return;
     }
 
@@ -64,21 +69,66 @@ export default function RiderSignupScreen() {
     }
   };
 
-  const handleSubmit = () => {
-    if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match!");
+  const handleSubmit = async () => {
+    const { fullName, email, password, confirmPassword, phoneNumber, barangay, plateNumber, driverLicenseNumber } = formData;
+
+    if (!fullName || !email || !password || !confirmPassword || !phoneNumber || !barangay || !plateNumber || !driverLicenseNumber) {
+      Alert.alert('Validation Error', 'Please fill in all required fields.');
       return;
     }
-    if (!formData.barangay) {
-      alert("Please select a Barangay!");
+
+    if (password !== confirmPassword) {
+      Alert.alert('Validation Error', 'Passwords do not match!');
       return;
     }
+
     if (!licenseImageUri) {
-      alert("Please upload your driver's license photo!");
+      Alert.alert('Validation Error', "Please upload your driver's license photo!");
       return;
     }
-    // Navigate to rider dashboard upon signup
-    router.push('/rider');
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/register/rider`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          phone: phoneNumber.trim(),
+          licenseNumber: driverLicenseNumber.trim().toUpperCase(),
+          plateNumber: plateNumber.trim().toUpperCase(),
+          vehicleModel: 'Motorcycle', // default rider vehicle in Butuan City
+          licenseImage: licenseImageUri,
+        }),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to create your rider account.');
+      }
+
+      // Save token and user details to memory store
+      Alert.alert(
+        'Application Submitted', 
+        'Your rider application was submitted successfully! Please wait for an administrator to approve your documents before logging in.', 
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/login'),
+          }
+        ]
+      );
+    } catch (error: any) {
+      console.error('Rider Registration Error:', error);
+      Alert.alert('Registration Failed', error.message || 'Unable to connect to server. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -343,8 +393,13 @@ export default function RiderSignupScreen() {
               style={styles.submitButton}
               activeOpacity={0.8}
               onPress={handleSubmit}
+              disabled={isLoading}
             >
-              <Text style={styles.submitText}>CREATE RIDER ACCOUNT</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.submitText}>CREATE RIDER ACCOUNT</Text>
+              )}
             </TouchableOpacity>
 
           </View>

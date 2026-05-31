@@ -9,159 +9,498 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  Image,
+  ActivityIndicator,
+  Alert,
+  Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Bike, Phone, MoreVertical, Image as ImageIcon } from 'lucide-react-native';
+import { ArrowLeft, Send, Bike, Phone, Image as ImageIcon, User, AlertCircle, MapPin } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
 
-type Message = {
+type ChatMessage = {
   id: string;
-  text: string;
-  sender: 'customer' | 'rider';
-  timestamp: string;
-  status?: 'sent' | 'delivered' | 'read';
+  orderId: string;
+  senderId: string;
+  receiverId: string;
+  message: string;
+  createdAt: string;
 };
-
-// Mock rider info per order
-const RIDER_INFO: Record<string, { name: string; vehicle: string }> = {
-  '1': { name: 'Mark Santos', vehicle: 'Honda Click 125i' },
-  '2': { name: 'Finding Rider...', vehicle: '' },
-  '3': { name: 'Anna Cruz', vehicle: 'Yamaha Mio i125' },
-};
-
-// Initial mock messages
-const INITIAL_MESSAGES: Message[] = [
-  {
-    id: '1',
-    text: 'Hi! I\'ve accepted your order. Heading to the store now 🏪',
-    sender: 'rider',
-    timestamp: '2:31 PM',
-  },
-  {
-    id: '2',
-    text: 'Great, thank you! Please make sure to get extra gravy for the chickenjoy',
-    sender: 'customer',
-    timestamp: '2:32 PM',
-    status: 'read',
-  },
-  {
-    id: '3',
-    text: 'Sure thing! I\'ll add extra gravy. Anything else you need?',
-    sender: 'rider',
-    timestamp: '2:33 PM',
-  },
-  {
-    id: '4',
-    text: 'That\'s all, thanks! 😊',
-    sender: 'customer',
-    timestamp: '2:33 PM',
-    status: 'read',
-  },
-  {
-    id: '5',
-    text: 'I\'m at Jollibee now, ordering your food. Will update you once I have everything!',
-    sender: 'rider',
-    timestamp: '2:40 PM',
-  },
-  {
-    id: '6',
-    text: 'Got everything! On my way to you now. ETA ~12 minutes 🛵',
-    sender: 'rider',
-    timestamp: '2:48 PM',
-  },
-];
-
-// Auto-replies for demo
-const AUTO_REPLIES = [
-  'Got it! I\'ll take note of that 👍',
-  'Alright, no worries! Almost there 🛵',
-  'Sure thing! I\'ll be there soon.',
-  'On my way! Traffic is light today 😊',
-  'No problem at all! See you in a few minutes.',
-];
 
 export default function ChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const orderId = (params.id as string) || '1';
-  const rider = RIDER_INFO[orderId] || RIDER_INFO['1'];
-  
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const orderId = params.id as string;
+
+  const currentUser = authStore.getUser();
+  const token = authStore.getToken();
+
+  const [order, setOrder] = useState<any>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
-  const sendMessage = () => {
-    if (!inputText.trim()) return;
+  const fetchChatDetails = async (showLoading = false) => {
+    if (!orderId || !token) return;
+    if (showLoading) setIsLoading(true);
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText.trim(),
-      sender: 'customer',
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
-      status: 'sent',
-    };
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const resData = await response.json();
 
-    setMessages(prev => [...prev, newMessage]);
-    setInputText('');
-
-    // Simulate rider auto-reply after 1.5s
-    setTimeout(() => {
-      const reply: Message = {
-        id: (Date.now() + 1).toString(),
-        text: AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)],
-        sender: 'rider',
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
-      };
-      setMessages(prev => [...prev, reply]);
-    }, 1500);
+      if (response.ok && resData.success) {
+        setOrder(resData.data.order);
+        setMessages(resData.data.order.chatMessages || []);
+      }
+    } catch (err) {
+      console.error('Error fetching chat details:', err);
+    } finally {
+      if (showLoading) setIsLoading(false);
+    }
   };
 
-  // Scroll to bottom when messages change
   useEffect(() => {
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  }, [messages]);
+    fetchChatDetails(true);
 
-  const renderMessage = ({ item }: { item: Message }) => {
-    const isCustomer = item.sender === 'customer';
+    // Poll every 3 seconds for real-time messages
+    const interval = setInterval(() => {
+      fetchChatDetails(false);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [orderId]);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 200);
+    }
+  }, [messages.length]);
+
+  const sendMessage = async () => {
+    if (!inputText.trim() || !orderId || !token) return;
+
+    if (!order?.riderId) {
+      Alert.alert("Notice", "Cannot send message. No rider is assigned to this order yet.");
+      return;
+    }
+
+    const textToSend = inputText.trim();
+    setInputText('');
+    setIsSending(true);
+
+    // Optimistic message creation
+    const receiverId = currentUser.id === order.customerId ? order.riderId : order.customerId;
+    const tempId = Date.now().toString();
+    const tempMsg: ChatMessage = {
+      id: tempId,
+      orderId,
+      senderId: currentUser.id,
+      receiverId,
+      message: textToSend,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, tempMsg]);
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: textToSend }),
+      });
+
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        // Replace temp msg with real message from server
+        setMessages(prev =>
+          prev.map(m => m.id === tempId ? resData.data.chatMessage : m)
+        );
+      } else {
+        // Remove temp message and alert error
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        Alert.alert('Error', resData.error || 'Failed to send message.');
+      }
+    } catch (err) {
+      console.error('Error sending message:', err);
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      Alert.alert('Error', 'Unable to connect to the server.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const sendImageMessage = async (base64Data: string) => {
+    if (!orderId || !token) return;
+
+    setIsSending(true);
+    const receiverId = currentUser.id === order.customerId ? order.riderId : order.customerId;
+    const dataUri = `data:image/jpeg;base64,${base64Data}`;
+
+    // Optimistic image message
+    const tempId = Date.now().toString();
+    const tempMsg: ChatMessage = {
+      id: tempId,
+      orderId,
+      senderId: currentUser.id,
+      receiverId,
+      message: dataUri,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, tempMsg]);
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: dataUri }),
+      });
+
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        setMessages(prev =>
+          prev.map(m => m.id === tempId ? resData.data.chatMessage : m)
+        );
+      } else {
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        Alert.alert('Error', resData.error || 'Failed to send image.');
+      }
+    } catch (err) {
+      console.error('Error sending image:', err);
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      Alert.alert('Error', 'Failed to transmit image to server.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const sendLocationMessage = async (lat: number, lng: number, label: string) => {
+    if (!orderId || !token) return;
+    setIsSending(true);
+
+    const content = `LOCATION:${lat},${lng},${label}`;
+    const receiverId = currentUser.id === order.customerId ? order.riderId : order.customerId;
+
+    // Optimistic location message
+    const tempId = Date.now().toString();
+    const tempMsg: ChatMessage = {
+      id: tempId,
+      orderId,
+      senderId: currentUser.id,
+      receiverId,
+      message: content,
+      createdAt: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, tempMsg]);
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: content }),
+      });
+
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        setMessages(prev =>
+          prev.map(m => m.id === tempId ? resData.data.chatMessage : m)
+        );
+      } else {
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        Alert.alert('Error', resData.error || 'Failed to share location.');
+      }
+    } catch (err) {
+      console.error('Error sharing location:', err);
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      Alert.alert('Error', 'Failed to transmit location data.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const shareCurrentLocation = async () => {
+    if (!orderId || !token) return;
+
+    if (!order?.riderId) {
+      Alert.alert("Notice", "Cannot share location. No rider is assigned to this order yet.");
+      return;
+    }
+
+    Alert.alert(
+      "📍 Share Location",
+      "Which location would you like to share?",
+      [
+        {
+          text: "🏠 Order Drop-off Address",
+          onPress: () => {
+            const lat = order.dropoffCoords?.latitude || 8.9515;
+            const lng = order.dropoffCoords?.longitude || 125.5280;
+            const addr = order.dropoffAddress || "Delivery Address";
+            sendLocationMessage(lat, lng, addr);
+          }
+        },
+        {
+          text: "📱 My Current Live Coordinates",
+          onPress: () => {
+            // Simulate current GPS coordinates within Butuan City boundaries
+            const lat = 8.9472 + (Math.random() - 0.5) * 0.006;
+            const lng = 125.5429 + (Math.random() - 0.5) * 0.006;
+            sendLocationMessage(lat, lng, "Live GPS Location");
+          }
+        },
+        {
+          text: "Cancel",
+          style: "cancel"
+        }
+      ]
+    );
+  };
+
+  const handleAttachment = () => {
+    if (!order?.riderId) {
+      Alert.alert("Notice", "Cannot send attachments. No rider has accepted this order yet.");
+      return;
+    }
+
+    Alert.alert(
+      "Send Attachment",
+      "Choose what to share:",
+      [
+        {
+          text: "📸 Take Photo",
+          onPress: takePhoto,
+        },
+        {
+          text: "🖼️ Choose from Gallery",
+          onPress: pickImage,
+        },
+        {
+          text: "📍 Share Location Pin",
+          onPress: shareCurrentLocation,
+        },
+        {
+          text: "Cancel",
+          style: "cancel"
+        }
+      ]
+    );
+  };
+
+  const pickImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (permissionResult.granted === false) {
+      Alert.alert("Permission Required", "Permission to access the media library is required!");
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        await sendImageMessage(result.assets[0].base64);
+      }
+    } catch (err) {
+      console.error('Error picking image:', err);
+      Alert.alert('Error', 'Failed to pick image.');
+    }
+  };
+
+  const takePhoto = async () => {
+    const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (permissionResult.granted === false) {
+      Alert.alert("Permission Required", "Permission to access the camera is required!");
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        await sendImageMessage(result.assets[0].base64);
+      }
+    } catch (err) {
+      console.error('Error taking photo:', err);
+      Alert.alert('Error', 'Failed to take photo.');
+    }
+  };
+
+  const handlePhoneCall = () => {
+    const phone = isCurrentUserCustomer ? order.rider?.phone : order.customer?.phone;
+    if (phone) {
+      Linking.openURL(`tel:${phone}`);
+    } else {
+      Alert.alert("Notice", "No contact details available.");
+    }
+  };
+
+  if (!orderId) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <AlertCircle size={48} color="#EF4444" />
+        <Text style={styles.errorTitle}>Error</Text>
+        <Text style={styles.errorDesc}>Invalid Order reference.</Text>
+      </View>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#0047AB" />
+        <Text style={styles.loadingText}>Syncing chat log...</Text>
+      </View>
+    );
+  }
+
+  if (!order) {
+    return (
+      <View style={[styles.container, styles.centerAlign, { padding: 24 }]}>
+        <AlertCircle size={48} color="#9CA3AF" />
+        <Text style={styles.errorTitle}>Order Not Found</Text>
+        <Text style={styles.errorDesc}>The active order detail could not be retrieved.</Text>
+        <TouchableOpacity style={styles.errorButton} onPress={() => router.back()}>
+          <Text style={styles.errorButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const isCurrentUserCustomer = order.customerId === currentUser?.id;
+  const partnerName = isCurrentUserCustomer
+    ? (order.rider?.name || 'Finding Rider...')
+    : (order.customer?.name || 'Customer');
+  const partnerSubtext = isCurrentUserCustomer
+    ? (order.rider ? `Online • ${order.rider.vehicleModel || 'Motorcycle'}` : 'Waiting for assignment')
+    : 'Online • Customer';
+
+  const formatTime = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const renderMessage = ({ item }: { item: ChatMessage }) => {
+    const isMe = item.senderId === currentUser?.id;
+    const isImage = item.message.startsWith('data:image/');
+    const isLocation = item.message.startsWith('LOCATION:');
+
+    let lat = 0, lng = 0, address = '';
+    if (isLocation) {
+      try {
+        const parts = item.message.replace('LOCATION:', '').split(',');
+        lat = parseFloat(parts[0]);
+        lng = parseFloat(parts[1]);
+        address = parts.slice(2).join(',');
+      } catch (e) {
+        console.error('Error parsing shared location:', e);
+      }
+    }
 
     return (
       <View style={[
         styles.messageBubbleWrapper,
-        isCustomer ? styles.customerWrapper : styles.riderWrapper
+        isMe ? styles.customerWrapper : styles.riderWrapper
       ]}>
-        {!isCustomer && (
+        {!isMe && (
           <View style={styles.riderMsgAvatar}>
             <Bike size={14} color="#D4AF37" />
           </View>
         )}
         <View style={[
           styles.messageBubble,
-          isCustomer ? styles.customerBubble : styles.riderBubble
+          isMe ? styles.customerBubble : styles.riderBubble,
+          (isImage || isLocation) && { paddingHorizontal: 4, paddingVertical: 4, borderRadius: 14 }
         ]}>
-          <Text style={[
-            styles.messageText,
-            isCustomer ? styles.customerText : styles.riderText
-          ]}>
-            {item.text}
-          </Text>
+          {isImage ? (
+            <Image
+              source={{ uri: item.message }}
+              style={styles.messageImage}
+              resizeMode="cover"
+            />
+          ) : isLocation ? (
+            <View style={styles.locationCard}>
+              <View style={styles.locationCardHeader}>
+                <MapPin size={16} color="#D4AF37" />
+                <Text style={styles.locationCardTitle}>Shared Location</Text>
+              </View>
+              <Text style={styles.locationCardAddress} numberOfLines={2}>
+                {address || "Coordinates Pin"}
+              </Text>
+              <Text style={styles.locationCardCoords}>
+                {lat.toFixed(5)}, {lng.toFixed(5)}
+              </Text>
+
+              <TouchableOpacity
+                style={styles.locationCardButton}
+                activeOpacity={0.8}
+                onPress={() => {
+                  const url = Platform.OS === 'ios'
+                    ? `http://maps.apple.com/?q=${lat},${lng}`
+                    : `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+                  Linking.openURL(url);
+                }}
+              >
+                <Text style={styles.locationCardButtonText}>🗺️ Navigate in Maps</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={[
+              styles.messageText,
+              isMe ? styles.customerText : styles.riderText
+            ]}>
+              {item.message}
+            </Text>
+          )}
           <View style={styles.messageFooter}>
             <Text style={[
               styles.messageTime,
-              isCustomer && { color: 'rgba(255,255,255,0.6)' }
+              isMe ? { color: 'rgba(255,255,255,0.6)' } : { color: '#9CA3AF' },
+              isLocation && { color: '#9CA3AF', marginRight: 8, marginBottom: 4 }
             ]}>
-              {item.timestamp}
+              {formatTime(item.createdAt)}
             </Text>
-            {item.status && isCustomer && (
-              <Text style={styles.messageStatus}>
-                {item.status === 'read' ? '✓✓' : item.status === 'delivered' ? '✓✓' : '✓'}
-              </Text>
-            )}
           </View>
         </View>
       </View>
@@ -171,10 +510,10 @@ export default function ChatScreen() {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
+
       {/* Chat Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           activeOpacity={0.7}
           onPress={() => router.back()}
@@ -184,34 +523,42 @@ export default function ChatScreen() {
 
         <View style={styles.headerInfo}>
           <View style={styles.headerAvatar}>
-            <Bike size={18} color="#D4AF37" />
+            <User size={18} color="#D4AF37" />
           </View>
-          <View>
-            <Text style={styles.headerName}>{rider.name}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerName} numberOfLines={1}>{partnerName}</Text>
             <View style={styles.onlineIndicator}>
-              <View style={styles.onlineDot} />
-              <Text style={styles.onlineText}>Online • {rider.vehicle}</Text>
+              {order.riderId || !isCurrentUserCustomer ? (
+                <View style={styles.onlineDot} />
+              ) : null}
+              <Text style={styles.onlineText} numberOfLines={1}>{partnerSubtext}</Text>
             </View>
           </View>
         </View>
 
-        <TouchableOpacity style={styles.headerAction} activeOpacity={0.7}>
-          <Phone size={18} color="#D4AF37" />
-        </TouchableOpacity>
+        {(isCurrentUserCustomer && order.rider) || (!isCurrentUserCustomer && order.customer) ? (
+          <TouchableOpacity
+            style={styles.headerAction}
+            activeOpacity={0.7}
+            onPress={handlePhoneCall}
+          >
+            <Phone size={18} color="#D4AF37" />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Order Context Banner */}
       <View style={styles.orderBanner}>
         <Text style={styles.orderBannerText}>
-          📦 Order #{orderId} • In Transit
+          📦 Order #{orderId.substring(0, 8)}... • {order.status.replace('_', ' ')}
         </Text>
       </View>
 
       {/* Messages */}
       <KeyboardAvoidingView
         style={styles.chatArea}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 90}
       >
         <FlatList
           ref={flatListRef}
@@ -221,38 +568,65 @@ export default function ChatScreen() {
           contentContainerStyle={styles.messagesList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Bike size={48} color="#9CA3AF" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyTitle}>No messages yet</Text>
+              <Text style={styles.emptyDesc}>Start the conversation! Ask about the order state, share photos, or share location pins.</Text>
+            </View>
+          }
         />
 
         {/* Input Bar */}
         <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
-          <TouchableOpacity style={styles.attachButton} activeOpacity={0.7}>
-            <ImageIcon size={20} color="#6B7280" />
+          <TouchableOpacity
+            style={styles.attachButton}
+            activeOpacity={0.7}
+            onPress={handleAttachment}
+            disabled={!order.riderId}
+          >
+            <ImageIcon size={20} color={order.riderId ? "#6B7280" : "#D1D5DB"} />
           </TouchableOpacity>
-          
+
+          <TouchableOpacity
+            style={styles.attachButton}
+            activeOpacity={0.7}
+            onPress={shareCurrentLocation}
+            disabled={!order.riderId}
+          >
+            <MapPin size={20} color={order.riderId ? "#0047AB" : "#D1D5DB"} />
+          </TouchableOpacity>
+
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
               value={inputText}
               onChangeText={setInputText}
-              placeholder="Type a message..."
+              placeholder={order.riderId ? "Type a message..." : "Waiting for pilot accept..."}
               placeholderTextColor="#9CA3AF"
               multiline
               maxLength={500}
-              onSubmitEditing={sendMessage}
+              editable={!!order.riderId && !isSending}
             />
           </View>
 
-          <TouchableOpacity 
-            style={[
-              styles.sendButton,
-              inputText.trim() ? styles.sendButtonActive : {}
-            ]} 
-            activeOpacity={0.7}
-            onPress={sendMessage}
-            disabled={!inputText.trim()}
-          >
-            <Send size={18} color={inputText.trim() ? '#FFFFFF' : '#9CA3AF'} />
-          </TouchableOpacity>
+          {isSending ? (
+            <View style={styles.sendButton}>
+              <ActivityIndicator size="small" color="#0047AB" />
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.sendButton,
+                inputText.trim() && order.riderId ? styles.sendButtonActive : {}
+              ]}
+              activeOpacity={0.7}
+              onPress={sendMessage}
+              disabled={!inputText.trim() || !order.riderId}
+            >
+              <Send size={18} color={inputText.trim() && order.riderId ? '#FFFFFF' : '#9CA3AF'} />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -263,6 +637,43 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
+  },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#4B5563',
+    fontWeight: '500',
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1F2937',
+    marginTop: 16,
+  },
+  errorDesc: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 6,
+    paddingHorizontal: 32,
+  },
+  errorButton: {
+    marginTop: 20,
+    backgroundColor: '#0047AB',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  errorButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
   header: {
     backgroundColor: '#050A18',
@@ -355,8 +766,30 @@ const styles = StyleSheet.create({
   },
   messagesList: {
     padding: 16,
-    paddingBottom: 8,
+    paddingBottom: 24,
     gap: 8,
+    flexGrow: 1,
+  },
+
+  // Empty placeholder
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    marginTop: 64,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  emptyDesc: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 18,
   },
 
   // Message bubbles
@@ -418,6 +851,54 @@ const styles = StyleSheet.create({
   riderText: {
     color: '#1F2937',
   },
+  messageImage: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+  },
+  locationCard: {
+    width: 220,
+    padding: 12,
+    backgroundColor: '#050A18',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.3)',
+  },
+  locationCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  locationCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#D4AF37',
+  },
+  locationCardAddress: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    lineHeight: 16,
+    marginBottom: 4,
+  },
+  locationCardCoords: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: 8,
+  },
+  locationCardButton: {
+    backgroundColor: '#D4AF37',
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  locationCardButtonText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#050A18',
+  },
   messageFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -427,13 +908,7 @@ const styles = StyleSheet.create({
   },
   messageTime: {
     fontSize: 10,
-    color: '#9CA3AF',
     fontWeight: '500',
-  },
-  messageStatus: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.6)',
-    fontWeight: '600',
   },
 
   // Input bar
@@ -468,6 +943,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1F2937',
     paddingVertical: 8,
+    minHeight: 24,
+    textAlignVertical: 'top',
   },
   sendButton: {
     width: 40,

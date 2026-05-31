@@ -1,59 +1,102 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, FileText, CheckCircle, Clock, AlertCircle, UploadCloud } from 'lucide-react-native';
+import { ArrowLeft, FileText, CheckCircle, Clock, AlertCircle, Shield, Award } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function RiderDocumentsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const documents = [
-    {
-      id: '1',
-      title: "Driver's License",
-      status: 'verified',
-      expiry: 'Oct 2028',
-    },
-    {
-      id: '2',
-      title: 'Vehicle Registration (OR/CR)',
-      status: 'verified',
-      expiry: 'May 2027',
-    },
-    {
-      id: '3',
-      title: 'NBI Clearance',
-      status: 'pending',
-      expiry: 'N/A',
-    },
-    {
-      id: '4',
-      title: 'Barangay Clearance',
-      status: 'expired',
-      expiry: 'Jan 2026',
-    }
-  ];
+  const [docData, setDocData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const getStatusInfo = (status: string) => {
-    switch(status) {
-      case 'verified':
-        return { color: '#10B981', icon: CheckCircle, text: 'Verified' };
-      case 'pending':
-        return { color: '#F59E0B', icon: Clock, text: 'Under Review' };
-      case 'expired':
-        return { color: '#EF4444', icon: AlertCircle, text: 'Expired' };
-      default:
-        return { color: '#6B7280', icon: FileText, text: 'Unknown' };
+  const fetchRiderDocs = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/auth/profile`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        // Find documents associated with the rider account
+        const doc = resData.data.documents?.[0];
+        setDocData(doc || null);
+      }
+    } catch (e) {
+      console.error('Error fetching rider documents:', e);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchRiderDocs();
+  }, []);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'APPROVED':
+        return { color: '#10B981', bg: 'rgba(16, 185, 129, 0.1)', text: 'Verified', icon: CheckCircle };
+      case 'REJECTED':
+        return { color: '#EF4444', bg: 'rgba(239, 68, 68, 0.1)', text: 'Rejected', icon: AlertCircle };
+      default:
+        return { color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.1)', text: 'Under Review', icon: Clock };
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#050A18" />
+        <Text style={styles.loadingText}>Syncing documentation credentials...</Text>
+      </View>
+    );
+  }
+
+  const status = docData?.status || 'PENDING';
+  const badgeInfo = getStatusBadge(status);
+  const BadgeIcon = badgeInfo.icon;
+
+  const documentItems = [
+    {
+      id: 'license',
+      title: "Professional Driver's License",
+      subtitle: docData?.licenseNumber ? `License No: ${docData.licenseNumber}` : 'License Number Unavailable',
+      description: 'Official authorization issued by LTO permitting logistical courier operations.',
+    },
+    {
+      id: 'vehicle',
+      title: 'Vehicle Registration (OR/CR)',
+      subtitle: docData?.plateNumber ? `Plate / MV File No: ${docData.plateNumber}` : 'Plate Number Unavailable',
+      description: docData?.vehicleModel ? `Model: ${docData.vehicleModel}` : 'Vehicle Model details',
+    },
+    {
+      id: 'clearance',
+      title: 'Official NBI Clearance',
+      subtitle: 'Background Safety Check',
+      description: 'Criminal record clearance confirming citizen compliance and safety validation.',
+    }
+  ];
 
   return (
     <View style={styles.container}>
@@ -79,42 +122,48 @@ export default function RiderDocumentsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.sectionTitle}>REQUIRED DOCUMENTS</Text>
-        <Text style={styles.sectionDesc}>Keep these updated to avoid account suspension.</Text>
         
-        {documents.map((doc) => {
-          const statusInfo = getStatusInfo(doc.status);
-          const StatusIcon = statusInfo.icon;
-          
-          return (
-            <View key={doc.id} style={[styles.docCard, doc.status === 'expired' && styles.docCardExpired]}>
-              <View style={styles.docHeader}>
-                <View style={styles.docIconBox}>
-                  <FileText size={24} color="#1E3A8A" />
-                </View>
-                <View style={styles.docInfo}>
-                  <Text style={styles.docTitle}>{doc.title}</Text>
-                  <Text style={styles.docExpiry}>Valid until: {doc.expiry}</Text>
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: `${statusInfo.color}15` }]}>
-                  <StatusIcon size={12} color={statusInfo.color} />
-                  <Text style={[styles.statusText, { color: statusInfo.color }]}>
-                    {statusInfo.text}
-                  </Text>
-                </View>
-              </View>
+        {/* Verification Alert Banner */}
+        <View style={[styles.statusBanner, { backgroundColor: badgeInfo.bg, borderColor: `${badgeInfo.color}30` }]}>
+          <BadgeIcon size={24} color={badgeInfo.color} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.statusBannerTitle, { color: badgeInfo.color }]}>
+              Account Status: {badgeInfo.text}
+            </Text>
+            <Text style={styles.statusBannerDesc}>
+              {status === 'APPROVED' 
+                ? 'Your professional credentials have been fully verified. You are authorized to accept dispatches!'
+                : status === 'REJECTED'
+                ? 'One or more of your documents was rejected by administrative review. Please contact support.'
+                : 'Your rider application documents are currently undergoing verification reviews. We will notify you once complete.'}
+            </Text>
+          </View>
+        </View>
 
-              {doc.status !== 'verified' && (
-                <TouchableOpacity style={styles.uploadButton} activeOpacity={0.8}>
-                  <UploadCloud size={16} color="#FFFFFF" />
-                  <Text style={styles.uploadButtonText}>
-                    {doc.status === 'expired' ? 'Upload Renewal' : 'Upload Document'}
-                  </Text>
-                </TouchableOpacity>
-              )}
+        <Text style={styles.sectionTitle}>YOUR SUBMITTED CREDENTIALS</Text>
+        
+        {documentItems.map((item) => (
+          <View key={item.id} style={styles.docCard}>
+            <View style={styles.docHeader}>
+              <View style={styles.docIconBox}>
+                <FileText size={22} color="#050A18" />
+              </View>
+              <View style={styles.docInfo}>
+                <Text style={styles.docTitle}>{item.title}</Text>
+                <Text style={styles.docSubtitle}>{item.subtitle}</Text>
+                <Text style={styles.docDesc}>{item.description}</Text>
+              </View>
             </View>
-          );
-        })}
+          </View>
+        ))}
+
+        {/* Security badge footer */}
+        <View style={styles.securityFooter}>
+          <Shield size={16} color="#9CA3AF" />
+          <Text style={styles.securityFooterText}>
+            All documentation records are encrypted and secured under standard Capstone privacy bounds.
+          </Text>
+        </View>
 
       </ScrollView>
     </View>
@@ -126,17 +175,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
   header: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#050A18',
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    shadowColor: '#1E3A8A',
+    shadowColor: '#050A18',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowRadius: 10,
+    elevation: 8,
   },
   headerContent: {
     flexDirection: 'row',
@@ -164,22 +225,38 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 16,
   },
+  statusBanner: {
+    flexDirection: 'row',
+    gap: 16,
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  statusBannerTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  statusBannerDesc: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
   sectionTitle: {
     fontSize: 11,
     fontWeight: '900',
     color: '#9CA3AF',
     letterSpacing: 1.5,
     marginBottom: 4,
-  },
-  sectionDesc: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 8,
-    marginTop: -12,
+    marginTop: 8,
   },
   docCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -189,22 +266,20 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  docCardExpired: {
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    borderWidth: 1.5,
-  },
   docHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
   docIconBox: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    backgroundColor: 'rgba(30, 58, 138, 0.05)',
+    backgroundColor: 'rgba(5, 10, 24, 0.04)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(5, 10, 24, 0.08)',
   },
   docInfo: {
     flex: 1,
@@ -215,36 +290,32 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     marginBottom: 4,
   },
-  docExpiry: {
+  docSubtitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0047AB',
+    marginBottom: 6,
+  },
+  docDesc: {
     fontSize: 12,
     color: '#6B7280',
+    lineHeight: 18,
+    fontWeight: '500',
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 4,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  uploadButton: {
+  securityFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1E3A8A',
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginTop: 20,
     gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 20,
   },
-  uploadButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+  securityFooterText: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
+    fontWeight: '500',
+    flex: 1,
   },
 });

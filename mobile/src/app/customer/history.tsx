@@ -1,58 +1,113 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView, 
-  Platform
+  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Package, ChevronRight, ArrowLeft } from 'lucide-react-native';
+import { Package, ChevronRight, ArrowLeft, ShoppingCart, Send, Bike } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function CustomerHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const history = [
-    {
-      id: "1",
-      service: "Pabili - McDonald's",
-      date: "May 6, 2026",
-      amount: "₱350",
-      status: "Completed",
-    },
-    {
-      id: "2",
-      service: "Pahatod - Documents",
-      date: "May 5, 2026",
-      amount: "₱150",
-      status: "Completed",
-    },
-    {
-      id: "3",
-      service: "Pasugo - Cash In",
-      date: "May 4, 2026",
-      amount: "₱100",
-      status: "Completed",
-    },
-    {
-      id: "4",
-      service: "Pabili - Groceries",
-      date: "May 3, 2026",
-      amount: "₱520",
-      status: "Cancelled",
-    },
-    {
-      id: "5",
-      service: "Pakuha - Package",
-      date: "May 2, 2026",
-      amount: "₱200",
-      status: "Completed",
-    },
-  ];
+  const [history, setHistory] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchCustomerHistory = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/customer`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        const closedMissions = resData.data.orders.filter(
+          (order: any) => order.status === 'COMPLETED' || order.status === 'CANCELLED'
+        );
+        
+        // Sort chronologically descending (newest first)
+        closedMissions.sort(
+          (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        setHistory(closedMissions);
+      } else {
+        Alert.alert('Error', resData.error || 'Failed to fetch order history.');
+      }
+    } catch (err) {
+      console.error('Error fetching customer history:', err);
+      Alert.alert('Error', 'Unable to connect to the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCustomerHistory();
+  }, []);
+
+  const formatDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      const optionsDate: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+      const optionsTime: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
+      return `${d.toLocaleDateString('en-US', optionsDate)} • ${d.toLocaleTimeString('en-US', optionsTime)}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getServiceLabel = (item: any) => {
+    const details = item.details || {};
+    const isRide = item.type === 'PAHATOD' && details.rideService === true;
+    const serviceName = isRide ? 'FMU RIDE' : item.type;
+
+    if (item.type === 'PABILI') {
+      const firstItem = details.itemsList?.[0]?.name || 'Items';
+      return `Pabili - ${firstItem}`;
+    }
+    if (item.type === 'PASUGO') {
+      const desc = details.taskDetails || 'Errand';
+      return `Pasugo - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    if (item.type === 'PAHATOD') {
+      const desc = details.itemDescription || 'Delivery';
+      return `${serviceName} - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    if (item.type === 'PAKUHA') {
+      const desc = details.packageDetails || 'Package';
+      return `Pakuha - ${desc.length > 20 ? desc.substring(0, 18) + '...' : desc}`;
+    }
+    return `${serviceName} Errand`;
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#0047AB" />
+        <Text style={styles.loadingText}>Syncing order history...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -82,39 +137,68 @@ export default function CustomerHistoryScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.listContainer}>
-          {history.map((order) => (
-            <TouchableOpacity
-              key={order.id}
-              style={styles.historyCard}
-              activeOpacity={0.8}
-              onPress={() => router.push(`/order-details/${order.id}` as any)}
-            >
-              <View style={styles.cardContent}>
-                <View style={styles.cardLeft}>
-                  <View style={styles.iconWrapper}>
-                    <Package size={22} color="#0047AB" />
+          {history.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Bike size={48} color="#D1D5DB" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyText}>No Past Records</Text>
+              <Text style={styles.emptyDesc}>Deliveries you complete or cancel will appear in this ledger dashboard.</Text>
+            </View>
+          ) : (
+            history.map((order) => {
+              const details = order.details || {};
+              const isPabili = order.type === 'PABILI';
+              const isPasugo = order.type === 'PASUGO';
+              const isPakuha = order.type === 'PAKUHA';
+              const isRide = order.type === 'PAHATOD' && details.rideService === true;
+              
+              const deliveryFee = parseFloat(order.deliveryFee || '0');
+              const price = parseFloat(order.price || '0');
+              const totalCost = deliveryFee + price;
+
+              return (
+                <TouchableOpacity
+                  key={order.id}
+                  style={styles.historyCard}
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/track/${order.id}` as any)}
+                >
+                  <View style={styles.cardContent}>
+                    <View style={styles.cardLeft}>
+                      <View style={[
+                        styles.iconWrapper,
+                        isPabili && styles.pabiliIconBg,
+                        isPasugo && styles.pasugoIconBg,
+                        isPakuha && styles.pakuhaIconBg,
+                        isRide && styles.rideIconBg
+                      ]}>
+                        {isPabili ? <ShoppingCart size={18} color="#EA580C" /> :
+                         isPasugo ? <Send size={18} color="#2563EB" /> :
+                         isRide ? <Bike size={18} color="#D4AF37" /> :
+                         <Package size={18} color="#0047AB" />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.orderService}>{getServiceLabel(order)}</Text>
+                        <Text style={styles.orderDate}>{formatDate(order.createdAt)}</Text>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.cardRight}>
+                      <View style={styles.amountWrapper}>
+                        <Text style={styles.orderAmount}>₱{totalCost.toFixed(2)}</Text>
+                        <Text style={[
+                          styles.successLabel,
+                          order.status === 'CANCELLED' && styles.cancelledLabel
+                        ]}>
+                          {order.status}
+                        </Text>
+                      </View>
+                      <ChevronRight size={18} color="#C7C7CC" style={styles.arrowIcon} />
+                    </View>
                   </View>
-                  <View>
-                    <Text style={styles.orderService}>{order.service}</Text>
-                    <Text style={styles.orderDate}>{order.date}</Text>
-                  </View>
-                </View>
-                
-                <View style={styles.cardRight}>
-                  <View style={styles.amountWrapper}>
-                    <Text style={styles.orderAmount}>{order.amount}</Text>
-                    <Text style={[
-                      styles.successLabel,
-                      order.status === 'Cancelled' && styles.cancelledLabel
-                    ]}>
-                      {order.status.toUpperCase()}
-                    </Text>
-                  </View>
-                  <ChevronRight size={18} color="#C7C7CC" style={styles.arrowIcon} />
-                </View>
-              </View>
-            </TouchableOpacity>
-          ))}
+                </TouchableOpacity>
+              );
+            })
+          )}
         </View>
       </ScrollView>
     </View>
@@ -125,6 +209,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
+  },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
   },
   header: {
     backgroundColor: '#0047AB',
@@ -211,6 +307,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0, 71, 171, 0.1)',
   },
+  pabiliIconBg: {
+    backgroundColor: 'rgba(234, 88, 12, 0.08)',
+    borderColor: 'rgba(234, 88, 12, 0.2)',
+  },
+  pasugoIconBg: {
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderColor: 'rgba(37, 99, 235, 0.2)',
+  },
+  pakuhaIconBg: {
+    backgroundColor: 'rgba(147, 51, 234, 0.08)',
+    borderColor: 'rgba(147, 51, 234, 0.2)',
+  },
+  rideIconBg: {
+    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    borderColor: 'rgba(212, 175, 55, 0.2)',
+  },
   orderService: {
     fontSize: 15,
     fontWeight: 'bold',
@@ -248,5 +360,23 @@ const styles = StyleSheet.create({
   },
   arrowIcon: {
     marginLeft: 2,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    gap: 12,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#374151',
+    fontWeight: '800',
+  },
+  emptyDesc: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    lineHeight: 18,
   },
 });

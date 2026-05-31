@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -11,10 +11,16 @@ import { useRouter } from 'expo-router';
 import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Bell, Shield, HelpCircle, Heart } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [user, setUser] = useState(authStore.getUser());
+
+  useEffect(() => {
+    setUser(authStore.getUser());
+  }, []);
 
   const menuItems = [
     { icon: User, label: "Edit Profile", path: "/customer/edit-profile" },
@@ -24,6 +30,11 @@ export default function CustomerProfileScreen() {
     { icon: Heart, label: "Favorite Riders", path: "/customer/favorite-riders" },
     { icon: HelpCircle, label: "Help & Support", path: "/customer/help" },
   ];
+
+  const handleLogout = () => {
+    authStore.clearSession();
+    router.replace('/login');
+  };
 
   return (
     <View style={styles.container}>
@@ -51,7 +62,7 @@ export default function CustomerProfileScreen() {
                 <User size={36} color="#D4AF37" />
               </View>
               <View>
-                <Text style={styles.userName}>Juan Dela Cruz</Text>
+                <Text style={styles.userName}>{user?.name || 'Customer Commander'}</Text>
                 <Text style={styles.userRole}>Customer Commander</Text>
               </View>
             </View>
@@ -59,12 +70,12 @@ export default function CustomerProfileScreen() {
             <View style={styles.userInfoList}>
               <View style={styles.infoRow}>
                 <Mail size={16} color="#9CA3AF" />
-                <Text style={styles.infoText}>juan.delacruz@email.com</Text>
+                <Text style={styles.infoText}>{user?.email || 'customer@email.com'}</Text>
               </View>
               
               <View style={styles.infoRow}>
                 <Phone size={16} color="#9CA3AF" />
-                <Text style={styles.infoText}>0912 345 6789</Text>
+                <Text style={styles.infoText}>{user?.phone || '0912 345 6789'}</Text>
               </View>
 
               <View style={styles.infoRow}>
@@ -102,7 +113,7 @@ export default function CustomerProfileScreen() {
           <TouchableOpacity 
             style={styles.logoutButton}
             activeOpacity={0.8}
-            onPress={() => router.replace('/login')}
+            onPress={handleLogout}
           >
             <LogOut size={16} color="#EF4444" />
             <Text style={styles.logoutText}>LOGOUT COMMAND</Text>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -6,12 +6,16 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Platform,
-  Dimensions
+  Dimensions,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Wallet, Plus, ArrowUpRight, ArrowDownLeft, CreditCard, ArrowLeft } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 const { width } = Dimensions.get('window');
 
@@ -19,12 +23,135 @@ export default function CustomerWalletScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const transactions = [
-    { id: "1", type: "debit", amount: "₱350", description: "Pabili - Jollibee", date: "May 7, 2026" },
-    { id: "2", type: "credit", amount: "₱500", description: "Top Up", date: "May 6, 2026" },
-    { id: "3", type: "debit", amount: "₱150", description: "Pahatod Service", date: "May 5, 2026" },
-    { id: "4", type: "debit", amount: "₱200", description: "Pakuha Service", date: "May 4, 2026" },
-  ];
+  const [balance, setBalance] = useState('0');
+  const [cents, setCents] = useState('00');
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [totalAdded, setTotalAdded] = useState(0);
+
+  const fetchWalletDetails = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/wallet`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        const fullBalance = parseFloat(resData.data.walletBalance || '0').toFixed(2);
+        const [whole, dec] = fullBalance.split('.');
+        setBalance(whole);
+        setCents(dec);
+        setTransactions(resData.data.transactions);
+
+        // Update local auth store so balance matches elsewhere too
+        authStore.updateUser({ walletBalance: resData.data.walletBalance });
+
+        // Calculate statistics
+        let spentSum = 0;
+        let addedSum = 0;
+        resData.data.transactions.forEach((tx: any) => {
+          const amt = parseFloat(tx.amount || '0');
+          if (tx.type === 'DEBIT') {
+            spentSum += amt;
+          } else {
+            addedSum += amt; // TOPUP or CREDIT
+          }
+        });
+        setTotalSpent(spentSum);
+        setTotalAdded(addedSum);
+      }
+    } catch (err) {
+      console.error('Wallet fetch error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWalletDetails();
+  }, []);
+
+  const handleSimulateTopUp = () => {
+    Alert.alert(
+      'Simulated Top-Up',
+      'Choose your payment channel:',
+      [
+        {
+          text: 'GCash',
+          onPress: () => promptTopUpAmount('GCash'),
+        },
+        {
+          text: 'Maya',
+          onPress: () => promptTopUpAmount('Maya'),
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        }
+      ]
+    );
+  };
+
+  const promptTopUpAmount = (method: 'GCash' | 'Maya') => {
+    Alert.prompt(
+      `${method} Simulated Top-Up`,
+      `Enter the amount (PHP) you wish to top-up into your Digital Wallet via ${method}:`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Load Funds',
+          onPress: async (amountStr) => {
+            const amount = parseFloat(amountStr || '0');
+            if (isNaN(amount) || amount <= 0) {
+              Alert.alert('Invalid Amount', 'Please enter a valid amount greater than 0.');
+              return;
+            }
+
+            setIsActionLoading(true);
+            try {
+              const token = authStore.getToken();
+              const response = await fetch(`${API_URL}/api/wallet/topup`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  amount,
+                  method
+                })
+              });
+
+              const resData = await response.json();
+
+              if (!response.ok) {
+                throw new Error(resData.error || 'Failed to top up.');
+              }
+
+              Alert.alert('Top-Up Successful', `₱${amount.toFixed(2)} has been credited to your wallet via ${method}.`);
+              fetchWalletDetails();
+            } catch (err: any) {
+              Alert.alert('Top-Up Failed', err.message || 'Server connection error.');
+            } finally {
+              setIsActionLoading(false);
+            }
+          },
+        },
+      ],
+      'plain-text',
+      '500',
+      'number-pad'
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -45,90 +172,122 @@ export default function CustomerWalletScreen() {
             <Wallet size={20} color="#D4AF37" />
           </View>
 
-            {/* Glowing Balance Card */}
-            <View style={styles.balanceCard}>
-              <Text style={styles.balanceLabel}>AVAILABLE BALANCE</Text>
-              <View style={styles.balanceRow}>
-                <Text style={styles.balanceAmount}>₱1,250</Text>
-                <Text style={styles.balanceCents}>.00</Text>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.topUpButton}
-                activeOpacity={0.9}
-              >
-                <Plus size={18} color="#050A18" style={styles.buttonIcon} />
-                <Text style={styles.topUpText}>TOP UP CREDITS</Text>
-              </TouchableOpacity>
+          {/* Glowing Balance Card */}
+          <View style={styles.balanceCard}>
+            <Text style={styles.balanceLabel}>AVAILABLE BALANCE</Text>
+            <View style={styles.balanceRow}>
+              <Text style={styles.balanceAmount}>₱{balance}</Text>
+              <Text style={styles.balanceCents}>.{cents}</Text>
             </View>
+            
+            <TouchableOpacity 
+              style={styles.topUpButton}
+              activeOpacity={0.9}
+              onPress={handleSimulateTopUp}
+              disabled={isActionLoading}
+            >
+              {isActionLoading ? (
+                <ActivityIndicator color="#050A18" size="small" />
+              ) : (
+                <>
+                  <Plus size={18} color="#050A18" style={styles.buttonIcon} />
+                  <Text style={styles.topUpText}>TOP UP CREDITS (GCASH / MAYA)</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
+      </View>
 
-      {/* Main Content Area */}
+      {/* Main Scroll Area */}
       <ScrollView 
         style={styles.scrollView} 
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.body}>
-          {/* Spent vs Added Quick Stats */}
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <View style={styles.statHeader}>
-                <ArrowUpRight size={16} color="#EF4444" />
-                <Text style={styles.statLabel}>TOTAL SPENT</Text>
-              </View>
-              <Text style={styles.statValue}>₱1,200</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statHeader}>
-                <ArrowDownLeft size={16} color="#0047AB" />
-                <Text style={styles.statLabel}>TOTAL ADDED</Text>
-              </View>
-              <Text style={styles.statValue}>₱2,000</Text>
-            </View>
+        {isLoading ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#0047AB" />
+            <Text style={styles.loaderText}>Syncing Ledger...</Text>
           </View>
+        ) : (
+          <View style={styles.body}>
+            {/* Spent vs Added Quick Stats */}
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <View style={styles.statHeader}>
+                  <ArrowUpRight size={16} color="#EF4444" />
+                  <Text style={styles.statLabel}>TOTAL SPENT</Text>
+                </View>
+                <Text style={styles.statValue}>₱{totalSpent.toFixed(2)}</Text>
+              </View>
 
-          {/* Transactions List */}
-          <View style={styles.transactionsSection}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-            <View style={styles.transactionsList}>
-              {transactions.map((tx) => {
-                const isCredit = tx.type === 'credit';
-                return (
-                  <View key={tx.id} style={styles.txCard}>
-                    <View style={styles.txLeft}>
-                      <View style={[styles.txIconWrapper, isCredit ? styles.txCreditBg : styles.txDebitBg]}>
-                        {isCredit ? (
-                          <ArrowDownLeft size={18} color="#10B981" />
-                        ) : (
-                          <ArrowUpRight size={18} color="#EF4444" />
-                        )}
-                      </View>
-                      <View>
-                        <Text style={styles.txDesc}>{tx.description}</Text>
-                        <Text style={styles.txDate}>{tx.date}</Text>
-                      </View>
-                    </View>
-                    <Text style={[styles.txAmount, isCredit ? styles.txCreditText : styles.txDebitText]}>
-                      {isCredit ? '+' : '-'}{tx.amount}
-                    </Text>
-                  </View>
-                );
-              })}
+              <View style={styles.statCard}>
+                <View style={styles.statHeader}>
+                  <ArrowDownLeft size={16} color="#0047AB" />
+                  <Text style={styles.statLabel}>TOTAL ADDED</Text>
+                </View>
+                <Text style={styles.statValue}>₱{totalAdded.toFixed(2)}</Text>
+              </View>
             </View>
-          </View>
 
-          {/* Manage Payments Button */}
-          <TouchableOpacity 
-            style={styles.manageButton}
-            activeOpacity={0.8}
-          >
-            <CreditCard size={18} color="#4B5563" />
-            <Text style={styles.manageButtonText}>Manage Payment Methods</Text>
-          </TouchableOpacity>
-        </View>
+            {/* Transactions List */}
+            <View style={styles.transactionsSection}>
+              <Text style={styles.sectionTitle}>Recent Transactions</Text>
+              
+              {transactions.length === 0 ? (
+                <View style={styles.emptyTransactionsBox}>
+                  <CreditCard size={32} color="#D1D5DB" style={{ marginBottom: 8 }} />
+                  <Text style={styles.emptyTxTitle}>No Transaction History</Text>
+                  <Text style={styles.emptyTxDesc}>Your deposits, payouts, and order logs will appear here.</Text>
+                </View>
+              ) : (
+                <View style={styles.transactionsList}>
+                  {transactions.map((tx) => {
+                    const isCredit = tx.type === 'CREDIT' || tx.type === 'TOPUP';
+                    const txFormattedDate = new Date(tx.createdAt).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
+
+                    return (
+                      <View key={tx.id} style={styles.txCard}>
+                        <View style={styles.txLeft}>
+                          <View style={[styles.txIconWrapper, isCredit ? styles.txCreditBg : styles.txDebitBg]}>
+                            {isCredit ? (
+                              <ArrowDownLeft size={18} color="#10B981" />
+                            ) : (
+                              <ArrowUpRight size={18} color="#EF4444" />
+                            )}
+                          </View>
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={styles.txDesc} numberOfLines={1}>{tx.description}</Text>
+                            <Text style={styles.txDate}>{txFormattedDate}</Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.txAmount, isCredit ? styles.txCreditText : styles.txDebitText]}>
+                          {isCredit ? '+' : '-'}₱{parseFloat(tx.amount || '0').toFixed(2)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {/* Manage Payments Button */}
+            <TouchableOpacity 
+              style={styles.manageButton}
+              activeOpacity={0.8}
+            >
+              <CreditCard size={18} color="#4B5563" />
+              <Text style={styles.manageButtonText}>Manage GCash / Cards</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -241,6 +400,19 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 40,
   },
+  loaderContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    gap: 12,
+  },
+  loaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 1,
+  },
   body: {
     paddingHorizontal: 24,
     paddingTop: 24,
@@ -276,7 +448,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '900',
     color: '#1F2937',
     fontStyle: 'italic',
@@ -312,6 +484,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
   },
   txIconWrapper: {
     width: 38,
@@ -327,24 +500,46 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
   },
   txDesc: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     color: '#1F2937',
   },
   txDate: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#9CA3AF',
     marginTop: 2,
   },
   txAmount: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'right',
   },
   txCreditText: {
     color: '#10B981',
   },
   txDebitText: {
     color: '#1F2937',
+  },
+  emptyTransactionsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  emptyTxTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  emptyTxDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
   },
   manageButton: {
     flexDirection: 'row',

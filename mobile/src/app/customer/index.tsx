@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -7,18 +7,64 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Dimensions,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ShoppingBag, Send, Package, Navigation, Bell, MapPin, Bike } from 'lucide-react-native';
+import { ShoppingBag, Send, Package, Navigation, Bell, MapPin, Bike, Wallet } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 const { width } = Dimensions.get('window');
 
 export default function CustomerDashboardScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  const [user, setUser] = useState(authStore.getUser());
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
+
+  const fetchProfileAndOrders = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      // 1. Fetch latest profile/wallet balance
+      const profileRes = await fetch(`${API_URL}/api/auth/profile`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const profileData = await profileRes.json();
+      if (profileRes.ok && profileData.success) {
+        authStore.updateUser(profileData.data.user);
+        setUser(authStore.getUser());
+      }
+
+      // 2. Fetch customer orders
+      const ordersRes = await fetch(`${API_URL}/api/orders/customer`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const ordersData = await ordersRes.json();
+      if (ordersRes.ok && ordersData.success) {
+        // Filter for active orders (status is PENDING, ACCEPTED, or IN_TRANSIT)
+        const active = ordersData.data.orders.filter((order: any) => 
+          ['PENDING', 'ACCEPTED', 'IN_TRANSIT'].includes(order.status)
+        );
+        setActiveOrders(active);
+      }
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfileAndOrders();
+
+    // Poll every 10 seconds for real-time updates while on the dashboard
+    const interval = setInterval(fetchProfileAndOrders, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const services = [
     {
@@ -85,19 +131,32 @@ export default function CustomerDashboardScreen() {
                   />
                 </View>
                 <View>
-                  <Text style={styles.greetingText}>Hello, Juan!</Text>
+                  <Text style={styles.greetingText}>Hello, {user?.name.split(' ')[0] || 'Customer'}!</Text>
                   <Text style={styles.missionText}>What's your mission today?</Text>
                 </View>
               </View>
               
-              <TouchableOpacity 
-                style={styles.notificationButton}
-                activeOpacity={0.7}
-                onPress={() => router.push('/customer/notifications')}
-              >
-                <Bell size={24} color="#FFFFFF" />
-                <View style={styles.notificationBadge} />
-              </TouchableOpacity>
+              <View style={styles.headerRight}>
+                <TouchableOpacity 
+                  style={styles.walletChip}
+                  activeOpacity={0.8}
+                  onPress={() => router.push('/customer/wallet')}
+                >
+                  <Wallet size={14} color="#D4AF37" />
+                  <Text style={styles.walletBalanceText}>
+                    ₱{Number(user?.walletBalance || 0).toFixed(2)}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.notificationButton}
+                  activeOpacity={0.7}
+                  onPress={() => router.push('/customer/notifications')}
+                >
+                  <Bell size={22} color="#FFFFFF" />
+                  <View style={styles.notificationBadge} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Delivery Zone Banner */}
@@ -146,24 +205,54 @@ export default function CustomerDashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Active Order Card */}
-            <TouchableOpacity 
-              style={styles.orderCard}
-              activeOpacity={0.9}
-              onPress={() => router.push('/track/1' as any)}
-            >
-              <View style={styles.orderHeader}>
-                <Text style={styles.orderTitle}>Pabili - Jollibee</Text>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusBadgeText}>IN TRANSIT</Text>
-                </View>
+            {activeOrders.length === 0 ? (
+              <View style={styles.emptyOrdersCard}>
+                <Bike size={28} color="#D4AF37" style={{ marginBottom: 10 }} />
+                <Text style={styles.emptyOrdersTitle}>No Active Errands</Text>
+                <Text style={styles.emptyOrdersDesc}>Need something fetched? Choose a service above to dispatch a rider.</Text>
               </View>
-              <Text style={styles.riderText}>Rider: Mark Santos</Text>
-              <View style={styles.timeWrapper}>
-                <Navigation size={14} color="#6B7280" />
-                <Text style={styles.timeText}>Arriving in 15 minutes</Text>
+            ) : (
+              <View style={{ gap: 12 }}>
+                {activeOrders.map((order) => (
+                  <TouchableOpacity 
+                    key={order.id}
+                    style={styles.orderCard}
+                    activeOpacity={0.9}
+                    onPress={() => router.push('/customer/orders' as any)}
+                  >
+                    <View style={styles.orderHeader}>
+                      <Text style={styles.orderTitle}>
+                        {order.type === 'PAHATOD' && order.details?.rideService === true ? 'FMU RIDE' : order.type} - {order.pickupAddress.split(',')[0]}
+                      </Text>
+                      <View style={[
+                        styles.statusBadge,
+                        order.status === 'PENDING' && { backgroundColor: 'rgba(107, 114, 128, 0.1)', borderColor: 'rgba(107, 114, 128, 0.25)' },
+                        order.status === 'ACCEPTED' && { backgroundColor: 'rgba(0, 71, 171, 0.1)', borderColor: 'rgba(0, 71, 171, 0.25)' },
+                        order.status === 'IN_TRANSIT' && { backgroundColor: 'rgba(212, 175, 55, 0.12)', borderColor: 'rgba(212, 175, 55, 0.25)' },
+                      ]}>
+                        <Text style={[
+                          styles.statusBadgeText,
+                          order.status === 'PENDING' && { color: '#6B7280' },
+                          order.status === 'ACCEPTED' && { color: '#0047AB' },
+                          order.status === 'IN_TRANSIT' && { color: '#D4AF37' },
+                        ]}>
+                          {order.status}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.riderText}>
+                      {order.rider ? `Rider: ${order.rider.name}` : 'Searching for nearby rider...'}
+                    </Text>
+                    <View style={styles.timeWrapper}>
+                      <Navigation size={14} color="#6B7280" />
+                      <Text style={styles.timeText}>
+                        Fee: ₱{Number(order.deliveryFee).toFixed(2)} {Number(order.price) > 0 && `+ Item: ₱${Number(order.price).toFixed(2)}`}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
               </View>
-            </TouchableOpacity>
+            )}
           </View>
 
         </View>
@@ -229,7 +318,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
   },
   greetingText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFFFFF',
     textTransform: 'uppercase',
@@ -237,12 +326,33 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   missionText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#D4AF37',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginTop: 2,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  walletChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 50,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  walletBalanceText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   notificationButton: {
     padding: 10,
@@ -374,7 +484,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   orderTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '900',
     color: '#0047AB',
     fontStyle: 'italic',
@@ -390,11 +500,10 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 9,
     fontWeight: '900',
-    color: '#D4AF37',
     letterSpacing: 0.5,
   },
   riderText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#4B5563',
     marginBottom: 10,
   },
@@ -406,6 +515,33 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 12,
     color: '#6B7280',
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  emptyOrdersCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  emptyOrdersTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  emptyOrdersDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    lineHeight: 16,
   },
 });

@@ -8,12 +8,16 @@ import {
   TouchableOpacity, 
   KeyboardAvoidingView, 
   Platform, 
-  ScrollView
+  ScrollView,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Mail, Lock, Eye, EyeOff, ArrowLeft } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
+import { API_URL } from '../constants/api';
+import { authStore } from '../utils/auth-store';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -21,13 +25,48 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userType, setUserType] = useState<'customer' | 'rider'>('customer');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = () => {
-    // Basic navigation logic based on user type
-    if (userType === 'customer') {
-      router.push('/customer');
-    } else {
-      router.push('/rider');
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Validation Error', 'Please enter both email and password.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          role: userType.toUpperCase(),
+        }),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Authentication failed. Please check your credentials.');
+      }
+
+      // Save token and user details to memory store
+      authStore.setSession(resData.token, resData.data.user);
+
+      // Navigate to respective dashboard
+      if (userType === 'customer') {
+        router.push('/customer');
+      } else {
+        router.push('/rider');
+      }
+    } catch (error: any) {
+      console.error('Login Error:', error);
+      Alert.alert('Login Failed', error.message || 'Unable to connect to server. Please check your connection.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -153,8 +192,13 @@ export default function LoginScreen() {
               style={[styles.submitButton, { backgroundColor: primaryColor }]}
               activeOpacity={0.8}
               onPress={handleLogin}
+              disabled={isLoading}
             >
-              <Text style={styles.submitText}>LOGIN</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.submitText}>LOGIN</Text>
+              )}
             </TouchableOpacity>
 
           </View>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -7,26 +7,75 @@ import {
   ScrollView,
   TextInput,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, User, Mail, Phone, Camera } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function EditProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
   const [formData, setFormData] = useState({
-    name: 'Juan Dela Cruz',
-    email: 'juan.delacruz@email.com',
-    phone: '0912 345 6789'
+    name: '',
+    email: '',
+    phone: ''
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSave = () => {
-    // Save logic would go here
-    router.push('/customer/profile' as any);
+  useEffect(() => {
+    const user = authStore.getUser();
+    if (user) {
+      setFormData({
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.phone || ''
+      });
+    }
+  }, []);
+
+  const handleSave = async () => {
+    if (!formData.name || !formData.phone) {
+      Alert.alert('Validation Error', 'Full Name and Phone Number are required.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = authStore.getToken();
+      const response = await fetch(`${API_URL}/api/auth/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          phone: formData.phone.trim()
+        })
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to update profile details.');
+      }
+
+      authStore.updateUser(resData.data.user);
+      Alert.alert('Profile Saved', 'Your personal details have been updated successfully!', [
+        { text: 'OK', onPress: () => router.push('/customer/profile') }
+      ]);
+    } catch (err: any) {
+      Alert.alert('Update Failed', err.message || 'Server connection error. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -84,16 +133,13 @@ export default function EditProfileScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email Address</Text>
-              <View style={styles.inputWrapper}>
+              <Text style={styles.label}>Email Address (Read-Only)</Text>
+              <View style={[styles.inputWrapper, styles.readOnlyInput]}>
                 <Mail size={20} color="#9CA3AF" style={styles.inputIcon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, styles.readOnlyText]}
                   value={formData.email}
-                  onChangeText={(text) => setFormData({...formData, email: text})}
-                  placeholder="Enter email"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
+                  editable={false}
                   placeholderTextColor="#9CA3AF"
                 />
               </View>
@@ -123,8 +169,13 @@ export default function EditProfileScreen() {
             style={styles.saveButton}
             activeOpacity={0.8}
             onPress={handleSave}
+            disabled={isLoading}
           >
-            <Text style={styles.saveButtonText}>SAVE CHANGES</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.saveButtonText}>SAVE CHANGES</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -233,6 +284,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 16,
     height: 56,
+  },
+  readOnlyInput: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
+  },
+  readOnlyText: {
+    color: '#9CA3AF',
   },
   inputIcon: {
     marginRight: 12,

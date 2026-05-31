@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -11,10 +11,16 @@ import { useRouter } from 'expo-router';
 import { User, MapPin, Phone, Mail, ChevronRight, LogOut, Bell, Shield, HelpCircle, FileText, Star } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
 
 export default function RiderProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [user, setUser] = useState(authStore.getUser());
+
+  useEffect(() => {
+    setUser(authStore.getUser());
+  }, []);
 
   const menuItems = [
     { icon: User, label: "Edit Profile", path: "/rider/edit-profile" },
@@ -25,6 +31,11 @@ export default function RiderProfileScreen() {
     { icon: Shield, label: "Privacy & Security", path: "/rider/privacy-settings" },
     { icon: HelpCircle, label: "Help & Support", path: "/rider/help" },
   ];
+
+  const handleLogout = () => {
+    authStore.clearSession();
+    router.replace('/login');
+  };
 
   return (
     <View style={styles.container}>
@@ -52,16 +63,16 @@ export default function RiderProfileScreen() {
                 <User size={36} color="#D4AF37" />
               </View>
               <View>
-                <Text style={styles.userName}>Mark Santos</Text>
-                <Text style={styles.userRole}>Erran Rider Partner</Text>
+                <Text style={styles.userName}>{user?.name || 'Rider Partner'}</Text>
+                <Text style={styles.userRole}>FetchMeUp Pilot Partner</Text>
                 
                 {/* Stats Badges */}
                 <View style={styles.badgeRow}>
                   <View style={styles.ratingBadge}>
-                    <Text style={styles.ratingText}>⭐ 4.9</Text>
+                    <Text style={styles.ratingText}>⭐ {Number(user?.rating || 5.0).toFixed(1)}</Text>
                   </View>
                   <View style={styles.tripsBadge}>
-                    <Text style={styles.tripsText}>185 deliveries</Text>
+                    <Text style={styles.tripsText}>Verified Driver</Text>
                   </View>
                 </View>
               </View>
@@ -71,12 +82,12 @@ export default function RiderProfileScreen() {
             <View style={styles.userInfoList}>
               <View style={styles.infoRow}>
                 <Mail size={16} color="#9CA3AF" />
-                <Text style={styles.infoText}>mark.santos@email.com</Text>
+                <Text style={styles.infoText}>{user?.email || 'rider@email.com'}</Text>
               </View>
               
               <View style={styles.infoRow}>
                 <Phone size={16} color="#9CA3AF" />
-                <Text style={styles.infoText}>0912 345 6789</Text>
+                <Text style={styles.infoText}>{user?.phone || '0912 345 6789'}</Text>
               </View>
 
               <View style={styles.infoRow}>
@@ -114,7 +125,7 @@ export default function RiderProfileScreen() {
           <TouchableOpacity 
             style={styles.logoutButton}
             activeOpacity={0.8}
-            onPress={() => router.replace('/login')}
+            onPress={handleLogout}
           >
             <LogOut size={16} color="#EF4444" />
             <Text style={styles.logoutText}>LOGOUT PARTNER</Text>

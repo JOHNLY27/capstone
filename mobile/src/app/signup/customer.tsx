@@ -10,18 +10,23 @@ import {
   Platform, 
   ScrollView,
   Modal,
-  FlatList
+  FlatList,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { User, Mail, Lock, Phone, MapPin, Eye, EyeOff, ArrowLeft, ChevronDown } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { getBarangays } from '../../data/philippines';
+import { API_URL } from '../../constants/api';
+import { authStore } from '../../utils/auth-store';
 
 export default function CustomerSignupScreen() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     fullName: '',
@@ -40,17 +45,55 @@ export default function CustomerSignupScreen() {
   // Fetch all barangays for Butuan City, Agusan del Norte
   const barangays = getBarangays(formData.province, formData.city);
 
-  const handleSubmit = () => {
-    if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match!");
+  const handleSubmit = async () => {
+    const { fullName, email, password, confirmPassword, phoneNumber, barangay, streetPurok } = formData;
+
+    if (!fullName || !email || !password || !confirmPassword || !phoneNumber || !barangay) {
+      Alert.alert('Validation Error', 'Please fill in all required fields.');
       return;
     }
-    if (!formData.barangay) {
-      alert("Please select a Barangay!");
+
+    if (password !== confirmPassword) {
+      Alert.alert('Validation Error', 'Passwords do not match!');
       return;
     }
-    // Navigate to customer dashboard upon signup
-    router.push('/customer');
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/register/customer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          phone: phoneNumber.trim(),
+        }),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to create your customer account.');
+      }
+
+      // Save token and user details to memory store
+      authStore.setSession(resData.token, resData.data.user);
+
+      Alert.alert('Success', 'Account created successfully!', [
+        {
+          text: 'Proceed',
+          onPress: () => router.push('/customer'),
+        }
+      ]);
+    } catch (error: any) {
+      console.error('Customer Registration Error:', error);
+      Alert.alert('Registration Failed', error.message || 'Unable to connect to server. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -251,8 +294,13 @@ export default function CustomerSignupScreen() {
               style={styles.submitButton}
               activeOpacity={0.8}
               onPress={handleSubmit}
+              disabled={isLoading}
             >
-              <Text style={styles.submitText}>CREATE ACCOUNT</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.submitText}>CREATE ACCOUNT</Text>
+              )}
             </TouchableOpacity>
 
           </View>

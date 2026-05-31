@@ -5,6 +5,7 @@ import { CustomerSignupPage } from "./pages/CustomerSignupPage";
 import { RiderSignupPage } from "./pages/RiderSignupPage";
 import { CustomerLayout } from "./layouts/CustomerLayout";
 import { RiderLayout } from "./layouts/RiderLayout";
+import { AdminLayout } from "./layouts/AdminLayout";
 import { CustomerDashboard } from "./pages/customer/Dashboard";
 import { PabiliService } from "./pages/customer/PabiliService";
 import { PasugoService } from "./pages/customer/PasugoService";
@@ -43,6 +44,11 @@ import { ServiceAreas } from "./pages/rider/ServiceAreas";
 import { RiderDocuments } from "./pages/rider/Documents";
 import { RiderPerformance } from "./pages/rider/Performance";
 import { RiderAvailability } from "./pages/rider/Availability";
+import { AdminDashboard } from "./pages/admin/AdminDashboard";
+import { RiderApprovalsPage } from "./pages/admin/RiderApprovalsPage";
+import { UserManagementPage } from "./pages/admin/UserManagementPage";
+import { WithdrawalApprovalsPage } from "./pages/admin/WithdrawalApprovalsPage";
+import SupportChatsPage from "./pages/admin/SupportChatsPage";
 
 export const router = createBrowserRouter([
   {
@@ -110,6 +116,17 @@ export const router = createBrowserRouter([
       { path: "documents", Component: RiderDocuments },
       { path: "performance", Component: RiderPerformance },
       { path: "availability", Component: RiderAvailability },
+    ],
+  },
+  {
+    path: "/admin",
+    Component: AdminLayout,
+    children: [
+      { index: true, Component: AdminDashboard },
+      { path: "approvals", Component: RiderApprovalsPage },
+      { path: "users", Component: UserManagementPage },
+      { path: "withdrawals", Component: WithdrawalApprovalsPage },
+      { path: "support", Component: SupportChatsPage },
     ],
   },
 ]);

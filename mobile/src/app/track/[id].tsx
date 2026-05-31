@@ -6,13 +6,17 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Dimensions,
-  Image
+  ActivityIndicator,
+  Alert,
+  Modal,
+  TextInput,
+  Linking,
+  Platform
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { 
   Bike, Phone, MessageSquare, MapPin, ArrowLeft, 
-  Navigation, CheckCircle, Clock, Package, Star,
-  Shield, CircleDot
+  Clock, Package, Star, Shield, CircleDot, CheckCircle, Heart
 } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,86 +28,27 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
-const { width, height } = Dimensions.get('window');
-
-// Mock order data
-const MOCK_ORDERS: Record<string, any> = {
-  '1': {
-    id: '1',
-    service: 'Pabili',
-    store: 'Jollibee - Robinsons Butuan',
-    items: ['2pc Chickenjoy', 'Jolly Spaghetti', 'Peach Mango Pie x2'],
-    status: 'in_transit',
-    rider: {
-      name: 'Mark Santos',
-      phone: '+63 912 345 6789',
-      rating: 4.9,
-      completedTrips: 847,
-      vehicle: 'Honda Click 125i',
-      plate: 'ABC-1234',
-    },
-    pickup: 'Jollibee, Robinsons Place Butuan',
-    dropoff: 'Brgy. Libertad, J.C. Aquino Ave',
-    estimatedTime: '12-15 min',
-    totalAmount: '₱385.00',
-    deliveryFee: '₱49.00',
-    orderTime: '2:30 PM',
-  },
-  '2': {
-    id: '2',
-    service: 'Pasugo',
-    store: 'Cash-In Service',
-    items: ['GCash Cash-In ₱500'],
-    status: 'finding_rider',
-    rider: null,
-    pickup: 'Palawan Pawnshop - Butuan',
-    dropoff: 'Villa Kananga, Butuan City',
-    estimatedTime: 'Finding rider...',
-    totalAmount: '₱500.00',
-    deliveryFee: '₱39.00',
-    orderTime: '2:45 PM',
-  },
-  '3': {
-    id: '3',
-    service: 'Pakuha',
-    store: 'Document Pickup',
-    items: ['Birth Certificate', 'Barangay Clearance'],
-    status: 'picked_up',
-    rider: {
-      name: 'Anna Cruz',
-      phone: '+63 917 654 3210',
-      rating: 4.8,
-      completedTrips: 562,
-      vehicle: 'Yamaha Mio i125',
-      plate: 'XYZ-5678',
-    },
-    pickup: 'City Hall, Butuan City',
-    dropoff: 'Brgy. Baan, Butuan City',
-    estimatedTime: '8-10 min',
-    totalAmount: '₱200.00',
-    deliveryFee: '₱55.00',
-    orderTime: '2:15 PM',
-  },
-};
+const { width } = Dimensions.get('window');
 
 const STATUS_STEPS = [
-  { key: 'confirmed', label: 'Order Confirmed', description: 'Your order has been placed' },
+  { key: 'confirmed', label: 'Errand Placed', description: 'Your request has been registered' },
   { key: 'finding_rider', label: 'Finding Rider', description: 'Matching you with a nearby rider' },
-  { key: 'rider_accepted', label: 'Rider Accepted', description: 'Rider is heading to the store' },
-  { key: 'picked_up', label: 'Items Picked Up', description: 'Rider has your items' },
+  { key: 'rider_accepted', label: 'Rider Heading Out', description: 'Rider has accepted and is on the way' },
+  { key: 'picked_up', label: 'In Progress', description: 'Rider is carrying out the operation' },
   { key: 'in_transit', label: 'In Transit', description: 'Rider is on the way to you' },
-  { key: 'delivered', label: 'Delivered', description: 'Order complete!' },
+  { key: 'delivered', label: 'Delivered', description: 'Order successfully completed!' },
 ];
 
 function getStepIndex(status: string): number {
   switch (status) {
-    case 'confirmed': return 0;
-    case 'finding_rider': return 1;
-    case 'rider_accepted': return 2;
-    case 'picked_up': return 3;
-    case 'in_transit': return 4;
-    case 'delivered': return 5;
+    case 'PENDING': return 1; // Finding Rider
+    case 'ACCEPTED': return 2; // Rider Accepted
+    case 'IN_TRANSIT': return 4; // In Transit
+    case 'COMPLETED': return 5; // Delivered
+    case 'CANCELLED': return 5;
     default: return 1;
   }
 }
@@ -112,11 +57,53 @@ export default function TrackOrderScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const orderId = (params.id as string) || '1';
-  const order = MOCK_ORDERS[orderId] || MOCK_ORDERS['1'];
-  const currentStep = getStepIndex(order.status);
+  const orderId = params.id as string;
 
-  // Pulsing animation for active step
+  const [order, setOrder] = useState<any>(null);
+  const [favoritesList, setFavoritesList] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Rating states
+  const [showRateModal, setShowRateModal] = useState(false);
+  const [ratingInput, setRatingInput] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+
+  const handleSubmitRating = async () => {
+    if (!ratingInput || ratingInput < 1 || ratingInput > 5) return;
+    setIsSubmittingRating(true);
+    const token = authStore.getToken();
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}/rate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rating: ratingInput,
+          comment: reviewComment.trim(),
+        }),
+      });
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        Alert.alert('Thank You!', 'Your rating has been submitted successfully.');
+        setShowRateModal(false);
+        setReviewComment('');
+        fetchOrderDetails();
+      } else {
+        Alert.alert('Error', resData.error || 'Failed to submit rating.');
+      }
+    } catch (e) {
+      console.error('Error submitting rating:', e);
+      Alert.alert('Error', 'Unable to reach the server.');
+    } finally {
+      setIsSubmittingRating(false);
+    }
+  };
+
+  // Pulse animation for active step
   const pulseAnim = useSharedValue(1);
   useEffect(() => {
     pulseAnim.value = withRepeat(
@@ -133,7 +120,7 @@ export default function TrackOrderScreen() {
     transform: [{ scale: pulseAnim.value }],
   }));
 
-  // Rider dot movement animation
+  // Rider dot floating movement animation
   const riderFloat = useSharedValue(0);
   useEffect(() => {
     riderFloat.value = withRepeat(
@@ -150,6 +137,133 @@ export default function TrackOrderScreen() {
     transform: [{ translateX: riderFloat.value }],
   }));
 
+  const fetchFavorites = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_URL}/api/favorites`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        setFavoritesList(resData.favorites.map((fav: any) => fav.riderId));
+      }
+    } catch (e) {
+      console.error('Error fetching favorites list:', e);
+    }
+  };
+
+  const toggleFavoriteRider = async (riderId: string) => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/favorites/toggle`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ riderId }),
+      });
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        if (resData.isFavorite) {
+          setFavoritesList(prev => [...prev, riderId]);
+          Alert.alert('Trusted Pilot Added', `${order?.rider?.name || 'Rider'} is now saved in your trusted pilot registry! You can directly request them for future dispatches.`);
+        } else {
+          setFavoritesList(prev => prev.filter(id => id !== riderId));
+          Alert.alert('Favorite Removed', `${order?.rider?.name || 'Rider'} was removed from your favorite list.`);
+        }
+      } else {
+        Alert.alert('Notice', resData.error || 'Failed to toggle favorite.');
+      }
+    } catch (err) {
+      console.error('Toggle favorite error:', err);
+      Alert.alert('Error', 'Unable to complete the action.');
+    }
+  };
+
+  const fetchOrderDetails = async () => {
+    if (!orderId) return;
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/${orderId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        setOrder(resData.data.order);
+      }
+    } catch (err) {
+      console.error('Error fetching tracker details:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFavorites();
+    fetchOrderDetails();
+    // Poll every 5 seconds for real-time tracking updates
+    const interval = setInterval(fetchOrderDetails, 5000);
+    return () => clearInterval(interval);
+  }, [orderId]);
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#0047AB" />
+        <Text style={styles.loadingText}>Syncing tracker details...</Text>
+      </View>
+    );
+  }
+
+  if (!order) {
+    return (
+      <View style={[styles.container, styles.centerAlign, { padding: 24 }]}>
+        <Package size={48} color="#9CA3AF" />
+        <Text style={styles.errorTitle}>Order Not Found</Text>
+        <Text style={styles.errorDesc}>This operation could not be located or has already finished.</Text>
+        <TouchableOpacity style={styles.errorButton} onPress={() => router.push('/customer/orders')}>
+          <Text style={styles.errorButtonText}>Go to Active Orders</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const details = order.details || {};
+  const isRide = order.type === 'PAHATOD' && details.rideService === true;
+  const serviceLabel = isRide ? 'FMU RIDE' : order.type;
+  const currentStep = getStepIndex(order.status);
+  
+  // Format items
+  let itemStrings: string[] = [];
+  if (order.type === 'PABILI') {
+    if (details.itemsList) {
+      itemStrings = Array.isArray(details.itemsList) 
+        ? details.itemsList.map((item: any) => typeof item === 'string' ? item : item.item)
+        : String(details.itemsList).split(',').map(s => s.trim());
+    } else {
+      itemStrings = ['Shopping Errand List'];
+    }
+  } else if (order.type === 'PASUGO') {
+    itemStrings = [details.taskDetails || 'Errand operation'];
+  } else if (order.type === 'PAHATOD') {
+    itemStrings = [details.itemDescription || 'Courier Package'];
+  } else if (order.type === 'PAKUHA') {
+    itemStrings = [details.packageDetails || 'Pickup Package'];
+  }
+
+  // Parse price details
+  const deliveryFee = parseFloat(order.deliveryFee || '0');
+  const price = parseFloat(order.price || '0');
+  const totalAmount = deliveryFee + price;
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -160,17 +274,19 @@ export default function TrackOrderScreen() {
           <TouchableOpacity 
             style={styles.backButton}
             activeOpacity={0.7}
-            onPress={() => router.back()}
+            onPress={() => router.push('/customer/orders')}
           >
             <ArrowLeft size={20} color="#D4AF37" />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Track Order</Text>
-            <Text style={styles.headerSubtitle}>Order #{order.id} • {order.service}</Text>
+            <Text style={styles.headerSubtitle}>Order #{order.id.slice(0, 8).toUpperCase()} • {serviceLabel}</Text>
           </View>
           <View style={styles.etaBadge}>
             <Clock size={12} color="#D4AF37" />
-            <Text style={styles.etaBadgeText}>{order.estimatedTime}</Text>
+            <Text style={styles.etaBadgeText}>
+              {order.status === 'PENDING' ? 'Finding rider...' : 'Active'}
+            </Text>
           </View>
         </View>
       </View>
@@ -202,7 +318,7 @@ export default function TrackOrderScreen() {
                 <Package size={12} color="#FFF" />
               </View>
               <View style={styles.pinLabel}>
-                <Text style={styles.pinText}>Store</Text>
+                <Text style={styles.pinText}>Start</Text>
               </View>
             </View>
 
@@ -314,13 +430,27 @@ export default function TrackOrderScreen() {
                   <Bike size={24} color="#D4AF37" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.riderName}>{order.rider.name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={styles.riderName}>{order.rider.name}</Text>
+                    <TouchableOpacity 
+                      activeOpacity={0.7}
+                      onPress={() => toggleFavoriteRider(order.rider.id)}
+                    >
+                      <Heart 
+                        size={16} 
+                        color={favoritesList.includes(order.rider.id) ? "#EF4444" : "#9CA3AF"} 
+                        fill={favoritesList.includes(order.rider.id) ? "#EF4444" : "transparent"}
+                      />
+                    </TouchableOpacity>
+                  </View>
                   <View style={styles.riderMeta}>
                     <Star size={12} color="#D4AF37" fill="#D4AF37" />
-                    <Text style={styles.riderRating}>{order.rider.rating}</Text>
-                    <Text style={styles.riderTrips}>• {order.rider.completedTrips} trips</Text>
+                    <Text style={styles.riderRating}>{parseFloat(order.rider.rating || '5').toFixed(1)}</Text>
+                    <Text style={styles.riderTrips}>• {order.rider.ratingsCount || '10'} trips</Text>
                   </View>
-                  <Text style={styles.riderVehicle}>{order.rider.vehicle} • {order.rider.plate}</Text>
+                  <Text style={styles.riderVehicle}>
+                    {order.rider.riderDocuments?.[0]?.vehicleModel || 'Motorcycle'} • {order.rider.riderDocuments?.[0]?.plateNumber || 'Verified'}
+                  </Text>
                 </View>
                 <View style={styles.verifiedBadge}>
                   <Shield size={14} color="#10B981" />
@@ -328,22 +458,54 @@ export default function TrackOrderScreen() {
                 </View>
               </View>
 
-              {/* Contact buttons */}
-              <View style={styles.contactRow}>
-                <TouchableOpacity style={styles.callButton} activeOpacity={0.8}>
-                  <Phone size={18} color="#0047AB" />
-                  <Text style={styles.callText}>Call Rider</Text>
-                </TouchableOpacity>
+              {/* Rating or Contact buttons */}
+              {order.status === 'COMPLETED' ? (
+                <View style={styles.ratingInfoContainer}>
+                  {details.isRated ? (
+                    <View style={styles.ratedBanner}>
+                      <Star size={16} color="#10B981" fill="#10B981" />
+                      <Text style={styles.ratedBannerText}>
+                        You rated this pilot {details.riderRating}.0 ★
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity 
+                      style={styles.rateButton}
+                      activeOpacity={0.8}
+                      onPress={() => setShowRateModal(true)}
+                    >
+                      <Star size={18} color="#FFFFFF" fill="#FFFFFF" />
+                      <Text style={styles.rateButtonText}>Rate & Review Rider</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : (
+                <View style={styles.contactRow}>
+                  <TouchableOpacity 
+                    style={styles.callButton} 
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      if (order.rider?.phone) {
+                        Linking.openURL(`tel:${order.rider.phone}`);
+                      } else {
+                        Alert.alert('Notice', 'No phone details available.');
+                      }
+                    }}
+                  >
+                    <Phone size={18} color="#0047AB" />
+                    <Text style={styles.callText}>Call Rider</Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.chatButton} 
-                  activeOpacity={0.8}
-                  onPress={() => router.push(`/chat/${order.id}` as any)}
-                >
-                  <MessageSquare size={18} color="#FFFFFF" />
-                  <Text style={styles.chatText}>Chat</Text>
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity 
+                    style={styles.chatButton} 
+                    activeOpacity={0.8}
+                    onPress={() => router.push(`/chat/${order.id}` as any)}
+                  >
+                    <MessageSquare size={18} color="#FFFFFF" />
+                    <Text style={styles.chatText}>Chat</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         ) : (
@@ -369,7 +531,7 @@ export default function TrackOrderScreen() {
               <View style={[styles.routeDot, { backgroundColor: '#0047AB' }]} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.routeLabel}>PICKUP</Text>
-                <Text style={styles.routeAddress}>{order.pickup}</Text>
+                <Text style={styles.routeAddress}>{order.pickupAddress}</Text>
               </View>
             </View>
             <View style={styles.routeDivider} />
@@ -377,7 +539,7 @@ export default function TrackOrderScreen() {
               <View style={[styles.routeDot, { backgroundColor: '#10B981' }]} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.routeLabel}>DROP-OFF</Text>
-                <Text style={styles.routeAddress}>{order.dropoff}</Text>
+                <Text style={styles.routeAddress}>{order.dropoffAddress}</Text>
               </View>
             </View>
           </View>
@@ -385,7 +547,7 @@ export default function TrackOrderScreen() {
           {/* Items */}
           <View style={styles.itemsSection}>
             <Text style={styles.itemsSectionTitle}>Items</Text>
-            {order.items.map((item: string, idx: number) => (
+            {itemStrings.map((item: string, idx: number) => (
               <View key={idx} style={styles.itemRow}>
                 <View style={styles.itemBullet} />
                 <Text style={styles.itemText}>{item}</Text>
@@ -396,19 +558,17 @@ export default function TrackOrderScreen() {
           {/* Price breakdown */}
           <View style={styles.priceSection}>
             <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Order Total</Text>
-              <Text style={styles.priceValue}>{order.totalAmount}</Text>
+              <Text style={styles.priceLabel}>Errand cost</Text>
+              <Text style={styles.priceValue}>₱{price.toFixed(2)}</Text>
             </View>
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Delivery Fee</Text>
-              <Text style={styles.priceValue}>{order.deliveryFee}</Text>
+              <Text style={styles.priceValue}>₱{deliveryFee.toFixed(2)}</Text>
             </View>
             <View style={styles.priceDivider} />
             <View style={styles.priceRow}>
               <Text style={styles.priceTotalLabel}>Total</Text>
-              <Text style={styles.priceTotalValue}>
-                ₱{(parseFloat(order.totalAmount.replace('₱', '').replace(',', '')) + parseFloat(order.deliveryFee.replace('₱', '').replace(',', ''))).toFixed(2)}
-              </Text>
+              <Text style={styles.priceTotalValue}>₱{totalAmount.toFixed(2)}</Text>
             </View>
           </View>
         </View>
@@ -416,6 +576,80 @@ export default function TrackOrderScreen() {
         {/* Bottom spacer */}
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Star Rating & Review Modal */}
+      <Modal
+        visible={showRateModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowRateModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Rate Your Rider Partner</Text>
+            <Text style={styles.modalSubtitle}>How was your logistical experience with {order.rider?.name || 'this pilot'}?</Text>
+
+            {/* Stars Selector Row */}
+            <View style={styles.starsContainer}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity
+                  key={star}
+                  activeOpacity={0.7}
+                  onPress={() => setRatingInput(star)}
+                >
+                  <Star 
+                    size={36} 
+                    color={star <= ratingInput ? '#D4AF37' : '#D1D5DB'} 
+                    fill={star <= ratingInput ? '#D4AF37' : 'transparent'} 
+                    style={{ marginHorizontal: 6 }}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Review Comment Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Write a Review (Optional)</Text>
+              <TextInput
+                style={styles.commentInput}
+                placeholder="Share details of your transit ride, safety, speed, or courier handling..."
+                placeholderTextColor="#9CA3AF"
+                multiline={true}
+                numberOfLines={3}
+                value={reviewComment}
+                onChangeText={setReviewComment}
+              />
+            </View>
+
+            {/* Modal Actions */}
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setShowRateModal(false);
+                  setRatingInput(5);
+                  setReviewComment('');
+                }}
+                disabled={isSubmittingRating}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.modalSubmitBtn}
+                onPress={handleSubmitRating}
+                disabled={isSubmittingRating}
+              >
+                {isSubmittingRating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Submit Review</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -424,6 +658,43 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
+  },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+  },
+  errorDesc: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 6,
+    paddingHorizontal: 24,
+  },
+  errorButton: {
+    marginTop: 20,
+    backgroundColor: '#0047AB',
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  errorButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   header: {
     backgroundColor: '#0047AB',
@@ -906,7 +1177,144 @@ const styles = StyleSheet.create({
   priceTotalValue: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#0047AB',
     fontStyle: 'italic',
+  },
+
+  // Rating styles
+  ratingInfoContainer: {
+    paddingTop: 8,
+  },
+  ratedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
+    borderRadius: 14,
+    paddingVertical: 14,
+  },
+  ratedBannerText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#10B981',
+  },
+  rateButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#D4AF37',
+    borderRadius: 14,
+    paddingVertical: 14,
+    shadowColor: '#D4AF37',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  rateButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#050A18',
+  },
+
+  // Rating Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 10, 24, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1F2937',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+    fontWeight: '500',
+  },
+  starsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#4B5563',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  commentInput: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 13,
+    color: '#1F2937',
+    minHeight: 80,
+    textAlignVertical: 'top',
+    fontWeight: '600',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#4B5563',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalSubmitBtn: {
+    flex: 1,
+    backgroundColor: '#0047AB',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalSubmitText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -5,9 +5,11 @@ import {
   View, 
   TouchableOpacity, 
   ScrollView,
+  Linking,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, MessageCircle, PhoneCall, Mail, ChevronRight, AlertTriangle } from 'lucide-react-native';
+import { ArrowLeft, MessageCircle, PhoneCall, Mail, ChevronRight, AlertTriangle, FileText } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,12 +18,46 @@ export default function RiderHelpScreen() {
   const insets = useSafeAreaInsets();
   
   const faqs = [
-    "What to do if customer is unresponsive?",
-    "How to report a fake booking?",
-    "When do I get my weekly payout?",
-    "How to claim rider incentives?",
-    "What if my vehicle breaks down?",
+    {
+      q: "What to do if customer is unresponsive?",
+      a: "Wait at the drop-off location for at least 10 minutes. Message them via active order chat or call their contact number. If there is no response, contact Emergency Dispatch or Live Chat for authorization to return the item."
+    },
+    {
+      q: "How to report a fake booking?",
+      a: "If you suspect a booking is fake or fraudulent, do not proceed with purchasing goods. Immediately open the order options and select 'Report Fraud', or contact the Administrator in Live Chat with the Order ID."
+    },
+    {
+      q: "When do I get my weekly payout?",
+      a: "Weekly pilot payouts are automatically processed every Monday at 8:00 AM directly into your registered GCash simulated wallet tokens. Payout summaries can be audited under the 'Earnings' tab."
+    },
+    {
+      q: "How to claim rider incentives?",
+      a: "Rider incentive program tokens are automatically credited to your pilot account upon meeting daily dispatch target metrics (e.g. completing 5 trips during peak hours)."
+    },
+    {
+      q: "What if my vehicle breaks down?",
+      a: "Prioritize your safety! Pull over safely to the side of the road. Open your active order, call dispatch immediately using the 'Emergency Hotline' button below, and we will route another partner to pick up the cargo."
+    }
   ];
+
+  const handlePhoneCall = () => {
+    Linking.openURL('tel:+63900000000');
+  };
+
+  const handleEmergencyCall = () => {
+    Linking.openURL('tel:+63911111111');
+  };
+
+  const handleEmailSupport = () => {
+    Linking.openURL('mailto:support@fetchmeup.com?subject=Rider%20Partner%20Support%20Request');
+  };
+
+  const handleFAQPress = (faq: { q: string, a: string }) => {
+    Alert.alert(
+      faq.q,
+      `${faq.a}\n\nNeed further assistance? Tap 'Live Chat' to speak to the Admin in real-time.`
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -54,8 +90,12 @@ export default function RiderHelpScreen() {
             <AlertTriangle size={24} color="#EF4444" />
             <Text style={styles.emergencyTitle}>EMERGENCY HOTLINE</Text>
           </View>
-          <Text style={styles.emergencyDesc}>Tap here for immediate dispatch assistance in case of accidents or emergencies.</Text>
-          <TouchableOpacity style={styles.emergencyButton} activeOpacity={0.8}>
+          <Text style={styles.emergencyDesc}>Tap here for immediate dispatch assistance in case of accidents or severe transit emergencies.</Text>
+          <TouchableOpacity 
+            style={styles.emergencyButton} 
+            activeOpacity={0.8}
+            onPress={handleEmergencyCall}
+          >
             <PhoneCall size={18} color="#FFFFFF" />
             <Text style={styles.emergencyButtonText}>Call Emergency Dispatch</Text>
           </TouchableOpacity>
@@ -65,15 +105,23 @@ export default function RiderHelpScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>CONTACT SUPPORT</Text>
           <View style={styles.contactGrid}>
-            <TouchableOpacity style={styles.contactCard} activeOpacity={0.8}>
-              <View style={[styles.contactIcon, { backgroundColor: 'rgba(30, 58, 138, 0.1)' }]}>
-                <MessageCircle size={24} color="#1E3A8A" />
+            <TouchableOpacity 
+              style={styles.contactCard} 
+              activeOpacity={0.8}
+              onPress={() => router.push('/rider/support-chat' as any)}
+            >
+              <View style={[styles.contactIcon, { backgroundColor: 'rgba(5, 10, 24, 0.05)' }]}>
+                <MessageCircle size={24} color="#050A18" />
               </View>
               <Text style={styles.contactText}>Live Chat</Text>
-              <Text style={styles.contactSub}>For active orders</Text>
+              <Text style={styles.contactSub}>For active dispatches</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.contactCard} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.contactCard} 
+              activeOpacity={0.8}
+              onPress={handleEmailSupport}
+            >
               <View style={[styles.contactIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
                 <Mail size={24} color="#10B981" />
               </View>
@@ -89,13 +137,47 @@ export default function RiderHelpScreen() {
           <View style={styles.card}>
             {faqs.map((faq, index) => (
               <View key={index}>
-                <TouchableOpacity style={styles.faqRow} activeOpacity={0.7}>
-                  <Text style={styles.faqText}>{faq}</Text>
+                <TouchableOpacity 
+                  style={styles.faqRow} 
+                  activeOpacity={0.7}
+                  onPress={() => handleFAQPress(faq)}
+                >
+                  <Text style={styles.faqText}>{faq.q}</Text>
                   <ChevronRight size={20} color="#C7C7CC" />
                 </TouchableOpacity>
                 {index < faqs.length - 1 && <View style={styles.divider} />}
               </View>
             ))}
+          </View>
+        </View>
+
+        {/* Legal */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>LEGAL</Text>
+          <View style={styles.card}>
+            <TouchableOpacity 
+              style={styles.faqRow} 
+              activeOpacity={0.7}
+              onPress={() => Alert.alert("Terms of Service", "By operating as a FetchMeUp pilot partner, you agree to our transit safety protocols, local delivery rules, and GCash simulated payout procedures.")}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <FileText size={20} color="#6B7280" />
+                <Text style={styles.faqText}>Terms of Service</Text>
+              </View>
+              <ChevronRight size={20} color="#C7C7CC" />
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity 
+              style={styles.faqRow} 
+              activeOpacity={0.7}
+              onPress={() => Alert.alert("Privacy Policy", "FetchMeUp is committed to securing user coordinates, document verification files, and GCash transaction records.")}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <FileText size={20} color="#6B7280" />
+                <Text style={styles.faqText}>Privacy Policy</Text>
+              </View>
+              <ChevronRight size={20} color="#C7C7CC" />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -111,12 +193,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   header: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#050A18',
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    shadowColor: '#1E3A8A',
+    shadowColor: '#050A18',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
@@ -172,6 +254,7 @@ const styles = StyleSheet.create({
     color: '#4B5563',
     lineHeight: 20,
     marginBottom: 16,
+    fontWeight: '500',
   },
   emergencyButton: {
     flexDirection: 'row',
@@ -238,6 +321,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6B7280',
     marginTop: 4,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -260,7 +345,7 @@ const styles = StyleSheet.create({
   },
   faqText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#374151',
     flex: 1,
     paddingRight: 16,

@@ -1,64 +1,92 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView, 
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Package, Clock, ArrowLeft, ChevronRight } from 'lucide-react-native';
+import { Package, Clock, ArrowLeft, ChevronRight, Bike } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function CustomerOrdersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const orders = [
-    {
-      id: "1",
-      service: "Pabili - Jollibee",
-      status: "In Transit",
-      rider: "Mark Santos",
-      time: "15 min",
-      statusType: "transit", // transit, finding, completed
-    },
-    {
-      id: "2",
-      service: "Pasugo - Cash In",
-      status: "Finding Rider",
-      rider: null,
-      time: "2 min ago",
-      statusType: "finding",
-    },
-    {
-      id: "3",
-      service: "Pakuha - Documents",
-      status: "Completed",
-      rider: "Anna Cruz",
-      time: "30 min ago",
-      statusType: "completed",
-    },
-  ];
+  const [orders, setOrders] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const getStatusStyle = (type: string) => {
-    switch (type) {
-      case 'transit':
+  const fetchOrders = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/customer`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        setOrders(resData.data.orders);
+      }
+    } catch (err) {
+      console.error('Error fetching customer orders:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrders();
+
+    // Poll every 10 seconds for real-time order status updates
+    const interval = setInterval(fetchOrders, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getStatusDetails = (status: string) => {
+    switch (status) {
+      case 'PENDING':
         return {
-          container: styles.statusTransit,
-          text: styles.statusTransitText
-        };
-      case 'finding':
-        return {
+          text: 'FINDING RIDER',
           container: styles.statusFinding,
-          text: styles.statusFindingText
+          textStyle: styles.statusFindingText
+        };
+      case 'ACCEPTED':
+        return {
+          text: 'RIDER ACCEPTED',
+          container: styles.statusTransit,
+          textStyle: styles.statusTransitText
+        };
+      case 'IN_TRANSIT':
+        return {
+          text: 'IN TRANSIT',
+          container: styles.statusTransit,
+          textStyle: styles.statusTransitText
+        };
+      case 'COMPLETED':
+        return {
+          text: 'COMPLETED',
+          container: styles.statusCompleted,
+          textStyle: styles.statusCompletedText
+        };
+      case 'CANCELLED':
+        return {
+          text: 'CANCELLED',
+          container: styles.statusCancelled,
+          textStyle: styles.statusCancelledText
         };
       default:
         return {
+          text: status,
           container: styles.statusCompleted,
-          text: styles.statusCompletedText
+          textStyle: styles.statusCompletedText
         };
     }
   };
@@ -78,7 +106,7 @@ export default function CustomerOrdersScreen() {
             <ArrowLeft size={20} color="#D4AF37" />
           </TouchableOpacity>
           <View>
-            <Text style={styles.headerTitle}>Active Orders</Text>
+            <Text style={styles.headerTitle}>My Orders</Text>
             <Text style={styles.headerSubtitle}>Real-time Deployment Status</Text>
           </View>
         </View>
@@ -90,53 +118,72 @@ export default function CustomerOrdersScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.listContainer}>
-          {orders.map((order) => {
-            const statusStyles = getStatusStyle(order.statusType);
-            return (
-              <TouchableOpacity
-                key={order.id}
-                style={styles.orderCard}
-                activeOpacity={0.8}
-                onPress={() => router.push(`/track/${order.id}` as any)}
-              >
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <View style={styles.iconWrapper}>
-                      <Package size={22} color="#0047AB" />
-                    </View>
-                    <View>
-                      <Text style={styles.orderService}>{order.service}</Text>
-                      {order.rider && (
-                        <Text style={styles.orderRider}>Rider: {order.rider}</Text>
-                      )}
-                    </View>
-                  </View>
-                  <View style={[styles.statusBadge, statusStyles.container]}>
-                    <Text style={[styles.statusText, statusStyles.text]}>
-                      {order.status.toUpperCase()}
-                    </Text>
-                  </View>
-                </View>
+        {isLoading ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#0047AB" />
+            <Text style={styles.loaderText}>Syncing Missions...</Text>
+          </View>
+        ) : (
+          <View style={styles.listContainer}>
+            {orders.map((order) => {
+              const statusDetails = getStatusDetails(order.status);
+              const formattedDate = new Date(order.createdAt).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
 
-                <View style={styles.cardFooter}>
-                  <View style={styles.timeWrapper}>
-                    <Clock size={14} color="#6B7280" />
-                    <Text style={styles.timeText}>{order.time}</Text>
+              return (
+                <TouchableOpacity
+                  key={order.id}
+                  style={styles.orderCard}
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/track/${order.id}` as any)}
+                >
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                      <View style={styles.iconWrapper}>
+                        <Package size={22} color="#0047AB" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.orderService}>
+                          {order.type === 'PAHATOD' && order.details?.rideService === true ? 'FMU RIDE' : order.type} - {order.pickupAddress.split(',')[0]}
+                        </Text>
+                        <Text style={styles.orderRider}>
+                          {order.rider ? `Rider: ${order.rider.name}` : 'Searching for pilot...'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.statusBadge, statusDetails.container]}>
+                      <Text style={[styles.statusText, statusDetails.textStyle]}>
+                        {statusDetails.text}
+                      </Text>
+                    </View>
                   </View>
-                  <ChevronRight size={16} color="#9CA3AF" />
-                </View>
-              </TouchableOpacity>
-            );
-          })}
 
-          {orders.length === 0 && (
-            <View style={styles.emptyContainer}>
-              <Package size={48} color="#D1D5DB" />
-              <Text style={styles.emptyText}>No active orders found</Text>
-            </View>
-          )}
-        </View>
+                  <View style={styles.cardFooter}>
+                    <View style={styles.timeWrapper}>
+                      <Clock size={14} color="#6B7280" />
+                      <Text style={styles.timeText}>
+                        Fee: ₱{Number(order.deliveryFee).toFixed(2)} {Number(order.price) > 0 && `+ Item: ₱${Number(order.price).toFixed(2)}`} • {formattedDate}
+                      </Text>
+                    </View>
+                    <ChevronRight size={16} color="#9CA3AF" />
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {orders.length === 0 && (
+              <View style={styles.emptyContainer}>
+                <Bike size={48} color="#D1D5DB" style={{ marginBottom: 12 }} />
+                <Text style={styles.emptyText}>No Active Operations Found</Text>
+                <Text style={styles.emptyDesc}>Choose a service to launch your first delivery courier errand today!</Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -195,6 +242,19 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 40,
   },
+  loaderContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    gap: 12,
+  },
+  loaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 1,
+  },
   listContainer: {
     padding: 24,
     gap: 16,
@@ -233,14 +293,15 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0, 71, 171, 0.1)',
   },
   orderService: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#1F2937',
     marginBottom: 2,
   },
   orderRider: {
-    fontSize: 13,
-    color: '#4B5563',
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   statusBadge: {
     borderRadius: 50,
@@ -261,18 +322,25 @@ const styles = StyleSheet.create({
     color: '#D4AF37',
   },
   statusFinding: {
-    backgroundColor: 'rgba(0, 71, 171, 0.1)',
+    backgroundColor: 'rgba(0, 71, 171, 0.08)',
     borderColor: 'rgba(0, 71, 171, 0.2)',
   },
   statusFindingText: {
     color: '#0047AB',
   },
   statusCompleted: {
-    backgroundColor: '#F3F4F6',
-    borderColor: '#E5E7EB',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderColor: 'rgba(16, 185, 129, 0.25)',
   },
   statusCompletedText: {
-    color: '#4B5563',
+    color: '#10B981',
+  },
+  statusCancelled: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  statusCancelledText: {
+    color: '#EF4444',
   },
   cardFooter: {
     flexDirection: 'row',
@@ -288,19 +356,27 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   timeText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6B7280',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 64,
     gap: 12,
+    textAlign: 'center',
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 16,
+    color: '#374151',
+    fontWeight: '700',
+  },
+  emptyDesc: {
+    fontSize: 12,
     color: '#9CA3AF',
-    fontWeight: '600',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    lineHeight: 18,
   },
 });

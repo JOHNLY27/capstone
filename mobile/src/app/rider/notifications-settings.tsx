@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView,
-  Switch
+  Switch,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Bell, DollarSign, Map, Zap } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function RiderNotificationsSettingsScreen() {
   const router = useRouter();
@@ -23,9 +27,94 @@ export default function RiderNotificationsSettingsScreen() {
     promos: true,
   });
 
-  const toggleSetting = (key: keyof typeof settings) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchSettings = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/api/auth/settings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        const s = resData.settings || {};
+        setSettings({
+          newRequests: s.rider_newRequests !== undefined ? s.rider_newRequests : true,
+          earningsAlerts: s.rider_earningsAlerts !== undefined ? s.rider_earningsAlerts : true,
+          heatmaps: s.rider_heatmaps || false,
+          promos: s.rider_promos !== undefined ? s.rider_promos : true,
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching settings:', e);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const toggleSetting = async (key: keyof typeof settings) => {
+    const updatedSettings = {
+      ...settings,
+      [key]: !settings[key]
+    };
+    
+    setSettings(updatedSettings);
+
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      // Fetch full settings, merge, and PUT
+      const response = await fetch(`${API_URL}/api/auth/settings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+      const currentFullSettings = response.ok && resData.success ? (resData.settings || {}) : {};
+
+      const fullSettings = {
+        ...currentFullSettings,
+        rider_newRequests: updatedSettings.newRequests,
+        rider_earningsAlerts: updatedSettings.earningsAlerts,
+        rider_heatmaps: updatedSettings.heatmaps,
+        rider_promos: updatedSettings.promos,
+      };
+
+      const saveResponse = await fetch(`${API_URL}/api/auth/settings`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ settings: fullSettings })
+      });
+      
+      const saveData = await saveResponse.json();
+      if (!saveResponse.ok || !saveData.success) {
+        setSettings(settings); // Rollback
+        Alert.alert('Notice', 'Failed to update preferences on server.');
+      }
+    } catch (e) {
+      setSettings(settings); // Rollback
+      Alert.alert('Connection Error', 'Failed to save changes.');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#050A18" />
+        <Text style={styles.loadingText}>Syncing alert preferences...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -59,8 +148,8 @@ export default function RiderNotificationsSettingsScreen() {
           <View style={styles.card}>
             <View style={styles.settingRow}>
               <View style={styles.settingInfo}>
-                <View style={[styles.iconBox, { backgroundColor: 'rgba(30, 58, 138, 0.1)' }]}>
-                  <Zap size={20} color="#1E3A8A" />
+                <View style={[styles.iconBox, { backgroundColor: 'rgba(5, 10, 24, 0.05)' }]}>
+                  <Zap size={20} color="#050A18" />
                 </View>
                 <View>
                   <Text style={styles.settingLabel}>New Requests</Text>
@@ -68,8 +157,8 @@ export default function RiderNotificationsSettingsScreen() {
                 </View>
               </View>
               <Switch
-                trackColor={{ false: "#E5E7EB", true: "rgba(30, 58, 138, 0.5)" }}
-                thumbColor={settings.newRequests ? "#1E3A8A" : "#FFFFFF"}
+                trackColor={{ false: "#E5E7EB", true: "rgba(5, 10, 24, 0.4)" }}
+                thumbColor={settings.newRequests ? "#050A18" : "#FFFFFF"}
                 ios_backgroundColor="#E5E7EB"
                 onValueChange={() => toggleSetting('newRequests')}
                 value={settings.newRequests}
@@ -156,17 +245,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
   header: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#050A18',
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    shadowColor: '#1E3A8A',
+    shadowColor: '#050A18',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowRadius: 10,
+    elevation: 8,
   },
   headerContent: {
     flexDirection: 'row',

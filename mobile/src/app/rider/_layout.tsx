@@ -58,13 +58,14 @@ export default function RiderTabsLayout() {
         }} 
       />
       <Tabs.Screen name="notifications" options={{ href: null }} />
-      <Tabs.Screen name="edit-profile" options={{ href: null }} />
-      <Tabs.Screen name="documents" options={{ href: null }} />
-      <Tabs.Screen name="performance" options={{ href: null }} />
-      <Tabs.Screen name="areas" options={{ href: null }} />
-      <Tabs.Screen name="notifications-settings" options={{ href: null }} />
-      <Tabs.Screen name="privacy-settings" options={{ href: null }} />
-      <Tabs.Screen name="help" options={{ href: null }} />
+      <Tabs.Screen name="edit-profile" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="documents" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="performance" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="areas" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="notifications-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="privacy-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="help" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="support-chat" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

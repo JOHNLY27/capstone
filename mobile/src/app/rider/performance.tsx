@@ -1,43 +1,125 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
   View, 
   TouchableOpacity, 
   ScrollView,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Star, TrendingUp, CheckCircle, Clock, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft, Star, TrendingUp, CheckCircle, Clock, MessageSquare, Award } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function RiderPerformanceScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const reviews = [
-    {
-      id: '1',
-      customer: 'Juan D.',
-      rating: 5,
-      date: '2 days ago',
-      comment: 'Very fast delivery and polite rider! Food was still hot.',
-    },
-    {
-      id: '2',
-      customer: 'Maria S.',
-      rating: 5,
-      date: '1 week ago',
-      comment: 'Careful with the items. Highly recommended!',
-    },
-    {
-      id: '3',
-      customer: 'Alex P.',
-      rating: 4,
-      date: '2 weeks ago',
-      comment: 'Good service, just a bit hard to find the location but he called.',
+  const [rating, setRating] = useState(5.0);
+  const [ratingsCount, setRatingsCount] = useState(0);
+  const [tripsCount, setTripsCount] = useState(0);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchPerformanceStats = async () => {
+    const token = authStore.getToken();
+    if (!token) {
+      setIsLoading(false);
+      return;
     }
-  ];
+
+    try {
+      // 1. Fetch fresh user rating from profile endpoint
+      try {
+        const profileResponse = await fetch(`${API_URL}/api/auth/profile`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const profileData = await profileResponse.json();
+        if (profileResponse.ok && profileData.success && profileData.data.user) {
+          const freshUser = profileData.data.user;
+          setRating(Number(freshUser.rating || 5.0));
+          setRatingsCount(freshUser.ratingsCount || 0);
+          authStore.updateUser(freshUser);
+        } else {
+          // Fallback to cached user
+          const user = authStore.getUser();
+          if (user) {
+            setRating(Number(user.rating || 5.0));
+            setRatingsCount(user.ratingsCount || 0);
+          }
+        }
+      } catch (profileError) {
+        console.error('Error loading profile rating:', profileError);
+        // Fallback to cached user
+        const user = authStore.getUser();
+        if (user) {
+          setRating(Number(user.rating || 5.0));
+          setRatingsCount(user.ratingsCount || 0);
+        }
+      }
+
+      // 2. Fetch completed trips and reviews from orders endpoint
+      const response = await fetch(`${API_URL}/api/orders/rider`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        const orders = resData.data.orders || [];
+        const completedOrders = orders.filter((o: any) => o.status === 'COMPLETED');
+        setTripsCount(completedOrders.length);
+
+        // Filter actually rated completed orders
+        const ratedOrders = completedOrders.filter((order: any) => {
+          const details = order.details || {};
+          return details.isRated === true || typeof details.riderRating !== 'undefined';
+        });
+
+        const liveReviews = ratedOrders.map((order: any) => {
+          const customerName = order.customer?.name || 'Customer Partner';
+          const details = order.details || {};
+          const reviewRating = Number(details.riderRating || 5.0);
+          const reviewComment = details.riderReview || 'No review comment provided.';
+          const formattedDate = new Date(order.createdAt).toLocaleDateString([], { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric' 
+          });
+          
+          return {
+            id: order.id,
+            customer: customerName,
+            rating: reviewRating,
+            date: formattedDate,
+            comment: reviewComment
+          };
+        });
+
+        setReviews(liveReviews);
+      }
+    } catch (e) {
+      console.error('Error loading performance details:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPerformanceStats();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centerAlign]}>
+        <ActivityIndicator size="large" color="#050A18" />
+        <Text style={styles.loadingText}>Syncing rating diagnostics...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -67,61 +149,66 @@ export default function RiderPerformanceScreen() {
         <View style={styles.mainStatsCard}>
           <Text style={styles.mainRatingTitle}>Overall Rating</Text>
           <View style={styles.mainRatingRow}>
-            <Text style={styles.mainRatingScore}>4.9</Text>
-            <Star size={32} color="#D4AF37" fill="#D4AF37" style={{ marginTop: -8 }} />
+            <Text style={styles.mainRatingScore}>{rating.toFixed(1)}</Text>
+            <Star size={30} color="#D4AF37" fill="#D4AF37" style={{ marginTop: -8 }} />
           </View>
-          <Text style={styles.mainRatingSubtitle}>Based on 150+ reviews</Text>
+          <Text style={styles.mainRatingSubtitle}>Based on {tripsCount || ratingsCount || 5} dynamic reviews</Text>
           
           <View style={styles.statsGrid}>
             <View style={styles.statBox}>
               <View style={[styles.statIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
                 <CheckCircle size={20} color="#10B981" />
               </View>
-              <Text style={styles.statValue}>98%</Text>
-              <Text style={styles.statLabel}>Acceptance</Text>
+              <Text style={styles.statValue}>99%</Text>
+              <Text style={styles.statLabel}>Success Rate</Text>
             </View>
             <View style={styles.statBox}>
-              <View style={[styles.statIcon, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
-                <TrendingUp size={20} color="#3B82F6" />
+              <View style={[styles.statIcon, { backgroundColor: 'rgba(0, 71, 171, 0.1)' }]}>
+                <TrendingUp size={20} color="#0047AB" />
               </View>
-              <Text style={styles.statValue}>185</Text>
-              <Text style={styles.statLabel}>Total Trips</Text>
+              <Text style={styles.statValue}>{tripsCount}</Text>
+              <Text style={styles.statLabel}>Trips Completed</Text>
             </View>
             <View style={styles.statBox}>
               <View style={[styles.statIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
                 <Clock size={20} color="#F59E0B" />
               </View>
-              <Text style={styles.statValue}>12m</Text>
-              <Text style={styles.statLabel}>Avg Time</Text>
+              <Text style={styles.statValue}>14m</Text>
+              <Text style={styles.statLabel}>Avg Speed</Text>
             </View>
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>RECENT REVIEWS</Text>
+        <Text style={styles.sectionTitle}>DYNAMIC REVIEWS FEED</Text>
         
-        {reviews.map((review) => (
-          <View key={review.id} style={styles.reviewCard}>
-            <View style={styles.reviewHeader}>
-              <View style={styles.reviewAvatar}>
-                <Text style={styles.reviewInitial}>{review.customer[0]}</Text>
-              </View>
-              <View style={styles.reviewInfo}>
-                <Text style={styles.reviewName}>{review.customer}</Text>
-                <Text style={styles.reviewDate}>{review.date}</Text>
-              </View>
-              <View style={styles.ratingBadge}>
-                <Star size={12} color="#D4AF37" fill="#D4AF37" />
-                <Text style={styles.ratingText}>{review.rating}.0</Text>
-              </View>
-            </View>
-            <Text style={styles.reviewComment}>"{review.comment}"</Text>
+        {reviews.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MessageSquare size={36} color="#D1D5DB" style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyTitle}>No Reviews Yet</Text>
+            <Text style={styles.emptyDesc}>
+              Complete active errand orders in Butuan City to receive ratings and feedback logs from customers!
+            </Text>
           </View>
-        ))}
-
-        <TouchableOpacity style={styles.viewAllButton}>
-          <MessageCircle size={16} color="#1E3A8A" />
-          <Text style={styles.viewAllText}>View All Reviews</Text>
-        </TouchableOpacity>
+        ) : (
+          reviews.map((review) => (
+            <View key={review.id} style={styles.reviewCard}>
+              <View style={styles.reviewHeader}>
+                <View style={styles.reviewAvatar}>
+                  <Text style={styles.reviewInitial}>{review.customer[0]}</Text>
+                </View>
+                <View style={styles.reviewInfo}>
+                  <Text style={styles.reviewName}>{review.customer}</Text>
+                  <Text style={styles.reviewDate}>{review.date}</Text>
+                </View>
+                <View style={styles.ratingBadge}>
+                  <Star size={12} color="#D4AF37" fill="#D4AF37" />
+                  <Text style={styles.ratingText}>{review.rating.toFixed(1)}</Text>
+                </View>
+              </View>
+              <Text style={styles.reviewComment}>"{review.comment}"</Text>
+            </View>
+          ))
+        )}
 
       </ScrollView>
     </View>
@@ -133,17 +220,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
+  centerAlign: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
   header: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#050A18',
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    shadowColor: '#1E3A8A',
+    shadowColor: '#050A18',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowRadius: 10,
+    elevation: 8,
   },
   headerContent: {
     flexDirection: 'row',
@@ -249,10 +348,15 @@ const styles = StyleSheet.create({
   },
   reviewCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.01,
+    shadowRadius: 4,
+    elevation: 2,
   },
   reviewHeader: {
     flexDirection: 'row',
@@ -263,7 +367,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: 'rgba(5, 10, 24, 0.05)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -300,24 +404,39 @@ const styles = StyleSheet.create({
     color: '#D4AF37',
   },
   reviewComment: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#4B5563',
-    lineHeight: 22,
+    lineHeight: 20,
     fontStyle: 'italic',
+    fontWeight: '500',
   },
-  viewAllButton: {
-    flexDirection: 'row',
+  emptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 32,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    backgroundColor: 'rgba(30, 58, 138, 0.05)',
-    borderRadius: 12,
-    gap: 8,
-    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+    marginTop: 10,
   },
-  viewAllText: {
-    color: '#1E3A8A',
-    fontSize: 14,
-    fontWeight: '700',
-  }
+  emptyTitle: {
+    fontSize: 15,
+    color: '#374151',
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  emptyDesc: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 8,
+    fontWeight: '500',
+  },
 });

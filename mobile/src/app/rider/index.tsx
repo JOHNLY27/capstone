@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,74 +9,143 @@ import {
   Dimensions,
   Modal,
   FlatList,
-  Platform
+  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { MapPin, DollarSign, Clock, Bell, TrendingUp, Navigation, Package, ShoppingCart, Send, Info, User, Phone, MessageSquare, Check, X, Zap } from 'lucide-react-native';
+import { MapPin, DollarSign, Clock, Bell, TrendingUp, Navigation, Package, ShoppingCart, Send, Info, User, Phone, MessageSquare, Check, X, Zap, Bike } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 const { width, height } = Dimensions.get('window');
 
 export default function RiderDashboardScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  const [user, setUser] = useState(authStore.getUser());
+  const [nearbyRequests, setNearbyRequests] = useState<any[]>([]);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  
   const [availabilityVisible, setAvailabilityVisible] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [autoAccept, setAutoAccept] = useState(false);
-  const insets = useSafeAreaInsets();
+  const [isLoading, setIsLoading] = useState(true);
 
-  const nearbyRequests = [
-    {
-      id: "1",
-      type: "Pabili",
-      service: "Pabili - Jollibee",
-      customer: "Juan Dela Cruz",
-      distance: "0.5 km",
-      payment: "₱100",
-      time: "Just now",
-      details: {
-        items: ["2x Chickenjoy with Rice", "1x Jolly Spaghetti", "2x Peach Mango Pie", "2x Large Coke"],
-        pickupAddress: "Jollibee Drive-Thru, Gaisano Mall",
-        deliveryAddress: "Purok 4, Villa Kananga, Butuan City",
-        notes: "Please ask for extra gravy and ensure the food is hot. Cash on delivery.",
-        contact: "09123456789"
+  // Stats
+  const [todayEarnings, setTodayEarnings] = useState(0);
+  const [weeklyEarnings, setWeeklyEarnings] = useState(0);
+  const [completedCount, setCompletedCount] = useState(0);
+
+  const fetchRiderDashboardData = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      // 1. Fetch available pending orders
+      const avRes = await fetch(`${API_URL}/api/orders/available`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const avData = await avRes.json();
+      if (avRes.ok && avData.success) {
+        setNearbyRequests(avData.data.orders);
       }
-    },
-    {
-      id: "2",
-      type: "Pasugo",
-      service: "Pasugo - Cash In",
-      customer: "Maria Santos",
-      distance: "1.2 km",
-      payment: "₱80",
-      time: "2 min ago",
-      details: {
-        action: "GCash Cash-In / Load",
-        amount: "₱1,000",
-        pickupAddress: "7-Eleven Libertad (Near Mercury Drug)",
-        deliveryAddress: "Montalban St., Butuan City (Green Gate)",
-        notes: "The shop is just beside the entrance. Please call when you arrive.",
-        contact: "09987654321"
+
+      // 2. Fetch rider stats & active orders (using rider orders history)
+      const rdRes = await fetch(`${API_URL}/api/orders/rider`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const rdData = await rdRes.json();
+      if (rdRes.ok && rdData.success) {
+        const todayStr = new Date().toDateString();
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+        let earnings = 0;
+        let weekly = 0;
+        let count = 0;
+        const activeList: any[] = [];
+
+        rdData.data.orders.forEach((order: any) => {
+          if (order.status === 'COMPLETED') {
+            // Use updatedAt because it represents the completion date (when it was actually earned)
+            const orderDate = new Date(order.updatedAt || order.createdAt);
+            const orderDateStr = orderDate.toDateString();
+            const fee = parseFloat(order.deliveryFee || '0');
+
+            if (orderDateStr === todayStr) {
+              earnings += fee;
+              count += 1;
+            }
+
+            if (orderDate >= oneWeekAgo) {
+              weekly += fee;
+            }
+          } else if (order.status === 'ACCEPTED' || order.status === 'IN_TRANSIT') {
+            activeList.push(order);
+          }
+        });
+
+        setTodayEarnings(earnings);
+        setWeeklyEarnings(weekly);
+        setCompletedCount(count);
+        setActiveOrders(activeList);
       }
-    },
-    {
-      id: "3",
-      type: "Pahatod",
-      service: "Pahatod - Documents",
-      customer: "Pedro Cruz",
-      distance: "2.0 km",
-      payment: "₱120",
-      time: "5 min ago",
-      details: {
-        item: "Large Brown Envelope (Sensitive Documents)",
-        pickupAddress: "Agusan del Norte Provincial Capitol (Lobby)",
-        deliveryAddress: "City Hall Annex, Butuan City",
-        notes: "Look for Mr. Tan at the records office. Please handle with care - do not fold.",
-        contact: "09334455667"
+    } catch (err) {
+      console.error('Error fetching rider dashboard data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRiderDashboardData();
+
+    // Poll every 10 seconds for real-time jobs
+    const interval = setInterval(fetchRiderDashboardData, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleAcceptJob = async (orderId: string) => {
+    setIsLoading(true);
+    try {
+      const token = authStore.getToken();
+      const response = await fetch(`${API_URL}/api/orders/accept`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ orderId }),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to accept order.');
       }
-    },
-  ];
+
+      Alert.alert('Job Accepted', 'Mission locked! Route to store/pickup coordinates to proceed.', [
+        {
+          text: 'Proceed',
+          onPress: () => {
+            setSelectedRequest(null);
+            router.push(`/rider/delivery?id=${orderId}` as any);
+          }
+        }
+      ]);
+    } catch (err: any) {
+      console.error('Job accept error:', err);
+      Alert.alert('Failed to Claim Job', err.message || 'Another rider might have claimed this already.');
+    } finally {
+      setIsLoading(false);
+      fetchRiderDashboardData();
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -100,8 +169,8 @@ export default function RiderDashboardScreen() {
                   />
                 </View>
                 <View>
-                  <Text style={styles.greetingText}>Hello, Mark!</Text>
-                  <Text style={styles.onlineText}>Commander Online</Text>
+                  <Text style={styles.greetingText}>Hello, {user?.name.split(' ')[0] || 'Rider'}!</Text>
+                  <Text style={styles.onlineText}>{isOnline ? 'Commander Online' : 'Commander Offline'}</Text>
                 </View>
               </View>
 
@@ -122,7 +191,7 @@ export default function RiderDashboardScreen() {
                   <DollarSign size={16} color="#D4AF37" />
                   <Text style={styles.statLabel}>Today's Earnings</Text>
                 </View>
-                <Text style={styles.statValue}>₱850</Text>
+                <Text style={styles.statValue}>₱{todayEarnings.toFixed(2)}</Text>
               </View>
 
               <View style={styles.statCard}>
@@ -130,7 +199,7 @@ export default function RiderDashboardScreen() {
                   <TrendingUp size={16} color="#D4AF37" />
                   <Text style={styles.statLabel}>Completed</Text>
                 </View>
-                <Text style={styles.statValue}>8</Text>
+                <Text style={styles.statValue}>{completedCount}</Text>
               </View>
             </View>
 
@@ -158,6 +227,68 @@ export default function RiderDashboardScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Active Missions Section */}
+          {activeOrders.length > 0 && (
+            <View style={styles.activeSection}>
+              <View style={styles.activeHeader}>
+                <Text style={styles.activeSectionTitle}>Active Missions ({activeOrders.length})</Text>
+                <View style={styles.liveBadge}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>LIVE</Text>
+                </View>
+              </View>
+
+              {activeOrders.map((order) => {
+                const details = order.details || {};
+                const isRide = order.type === 'PAHATOD' && details.rideService === true;
+                const serviceLabel = isRide ? 'FMU RIDE' : order.type;
+                const totalCost = parseFloat(order.deliveryFee || '0') + parseFloat(order.price || '0');
+
+                return (
+                  <TouchableOpacity
+                    key={order.id}
+                    style={styles.activeCard}
+                    activeOpacity={0.9}
+                    onPress={() => router.push(`/rider/delivery?id=${order.id}` as any)}
+                  >
+                    <View style={styles.activeCardTop}>
+                      <View style={styles.activeCardLeft}>
+                        <View style={styles.activeIconBg}>
+                          <Bike size={20} color="#D4AF37" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.activeCardTitle} numberOfLines={1}>
+                            {serviceLabel} Delivery
+                          </Text>
+                          <Text style={styles.activeCardSub} numberOfLines={1}>
+                            To: {order.dropoffAddress.split(',')[0]}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.activePriceBadge}>
+                        <Text style={styles.activePriceText}>₱{totalCost.toFixed(2)}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.activeCardDivider} />
+
+                    <View style={styles.activeCardBottom}>
+                      <View style={styles.activeStatusWrapper}>
+                        <View style={styles.activeStatusIndicator} />
+                        <Text style={styles.activeStatusText}>
+                          {order.status === 'ACCEPTED' ? 'Heading to Pickup' : 'In Transit'}
+                        </Text>
+                      </View>
+                      <View style={styles.viewMissionButton}>
+                        <Text style={styles.viewMissionButtonText}>RESUME MISSION ➡️</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
           {/* Nearby Requests Section */}
           <View style={styles.requestsSection}>
             <View style={styles.requestsHeader}>
@@ -165,66 +296,97 @@ export default function RiderDashboardScreen() {
               <Clock size={20} color="#9CA3AF" />
             </View>
 
-            {/* List of Requests */}
-            <View style={styles.requestsList}>
-              {nearbyRequests.map((request) => {
-                const isPabili = request.type === 'Pabili';
-                const isPasugo = request.type === 'Pasugo';
+            {!isOnline ? (
+              <View style={styles.emptyRequestsCard}>
+                <Navigation size={32} color="#EF4444" style={{ marginBottom: 8 }} />
+                <Text style={styles.emptyRequestsTitle}>You are Offline</Text>
+                <Text style={styles.emptyRequestsDesc}>Turn on your online status from the availability toggle above to start receiving nearby errand requests in Butuan City.</Text>
+              </View>
+            ) : isLoading ? (
+              <ActivityIndicator size="small" color="#D4AF37" />
+            ) : nearbyRequests.length === 0 ? (
+              <View style={styles.emptyRequestsCard}>
+                <Zap size={32} color="#D1D5DB" style={{ marginBottom: 8 }} />
+                <Text style={styles.emptyRequestsTitle}>No Pending Errands</Text>
+                <Text style={styles.emptyRequestsDesc}>Butuan City is quiet right now. Real-time dispatches will show up instantly here.</Text>
+              </View>
+            ) : (
+              <View style={styles.requestsList}>
+                {nearbyRequests.map((request) => {
+                  const isPabili = request.type === 'PABILI';
+                  const isPasugo = request.type === 'PASUGO';
+                  const isPakuha = request.type === 'PAKUHA';
 
-                return (
-                  <TouchableOpacity
-                    key={request.id}
-                    style={styles.requestCard}
-                    activeOpacity={0.9}
-                    onPress={() => setSelectedRequest(request)}
-                  >
-                    <View style={styles.cardTop}>
-                      <View style={styles.cardHeaderLeft}>
-                        <View style={[
-                          styles.cardIconWrapper,
-                          isPabili && styles.pabiliIconBg,
-                          isPasugo && styles.pasugoIconBg,
-                          !isPabili && !isPasugo && styles.pahatodIconBg
-                        ]}>
-                          {isPabili ? <ShoppingCart size={20} color="#EA580C" /> :
-                            isPasugo ? <Send size={20} color="#2563EB" /> :
-                              <Package size={20} color="#9333EA" />}
+                  const itemCost = parseFloat(request.price || '0');
+                  const deliveryFee = parseFloat(request.deliveryFee || '0');
+                  const payAmount = deliveryFee + itemCost;
+
+                  return (
+                    <TouchableOpacity
+                      key={request.id}
+                      style={styles.requestCard}
+                      activeOpacity={0.9}
+                      onPress={() => setSelectedRequest(request)}
+                    >
+                      <View style={styles.cardTop}>
+                        <View style={styles.cardHeaderLeft}>
+                          <View style={[
+                            styles.cardIconWrapper,
+                            isPabili && styles.pabiliIconBg,
+                            isPasugo && styles.pasugoIconBg,
+                            !isPabili && !isPasugo && styles.pahatodIconBg
+                          ]}>
+                            {isPabili ? <ShoppingCart size={20} color="#EA580C" /> :
+                              isPasugo ? <Send size={20} color="#2563EB" /> :
+                                <Package size={20} color="#9333EA" />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={styles.cardServiceTitle} numberOfLines={1}>
+                                {request.type === 'PAHATOD' && request.details?.rideService === true ? 'FMU RIDE' : request.type} - {request.pickupAddress.split(',')[0]}
+                              </Text>
+                              {request.details?.targetedRiderId === user?.id && (
+                                <View style={styles.directRequestBadge}>
+                                  <Text style={styles.directRequestText}>🎯 DIRECT</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.cardCustomerText} numberOfLines={1}>
+                              Customer: {request.customer?.name || 'FetchMeUp Client'}
+                            </Text>
+                          </View>
                         </View>
-                        <View>
-                          <Text style={styles.cardServiceTitle}>{request.service}</Text>
-                          <Text style={styles.cardCustomerText}>Customer: {request.customer}</Text>
+
+                        <View style={styles.paymentBadge}>
+                          <Text style={styles.paymentBadgeText}>₱{payAmount.toFixed(2)}</Text>
                         </View>
                       </View>
 
-                      <View style={styles.paymentBadge}>
-                        <Text style={styles.paymentBadgeText}>{request.payment}</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.cardBottom}>
-                      <View style={styles.cardMetaRow}>
-                        <View style={styles.cardMetaItem}>
-                          <MapPin size={14} color="#9CA3AF" />
-                          <Text style={styles.cardMetaText}>{request.distance}</Text>
+                      <View style={styles.cardBottom}>
+                        <View style={styles.cardMetaRow}>
+                          <View style={styles.cardMetaItem}>
+                            <MapPin size={14} color="#9CA3AF" />
+                            <Text style={styles.cardMetaText}>{request.estimatedDistance.toFixed(1)} km</Text>
+                          </View>
+                          <View style={styles.cardMetaItem}>
+                            <Clock size={14} color="#9CA3AF" />
+                            <Text style={styles.cardMetaText}>Active</Text>
+                          </View>
                         </View>
-                        <View style={styles.cardMetaItem}>
-                          <Clock size={14} color="#9CA3AF" />
-                          <Text style={styles.cardMetaText}>{request.time}</Text>
-                        </View>
-                      </View>
 
-                      <TouchableOpacity
-                        style={styles.acceptButton}
-                        activeOpacity={0.8}
-                        onPress={() => router.push(`/rider/delivery/${request.id}` as any)}
-                      >
-                        <Text style={styles.acceptButtonText}>ACCEPT</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                        <TouchableOpacity
+                          style={styles.acceptButton}
+                          activeOpacity={0.8}
+                          onPress={() => handleAcceptJob(request.id)}
+                        >
+                          <Text style={styles.acceptButtonText}>ACCEPT</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
           </View>
 
           {/* Weekly Summary Banner */}
@@ -235,7 +397,7 @@ export default function RiderDashboardScreen() {
           >
             <View>
               <Text style={styles.weeklySummaryLabel}>WEEKLY EARNINGS</Text>
-              <Text style={styles.weeklySummaryValue}>₱4,250</Text>
+              <Text style={styles.weeklySummaryValue}>₱{weeklyEarnings.toFixed(2)}</Text>
             </View>
             <Navigation size={28} color="#D4AF37" />
           </TouchableOpacity>
@@ -259,14 +421,20 @@ export default function RiderDashboardScreen() {
                 <View style={styles.modalHeader}>
                   <View style={styles.modalHeaderTop}>
                     <View style={styles.modalBadge}>
-                      <Text style={styles.modalBadgeText}>{selectedRequest.type.toUpperCase()}</Text>
+                      <Text style={styles.modalBadgeText}>
+                        {selectedRequest.type === 'PAHATOD' && selectedRequest.details?.rideService === true ? 'FMU RIDE' : selectedRequest.type}
+                      </Text>
                     </View>
-                    <Text style={styles.modalPaymentText}>{selectedRequest.payment}</Text>
+                    <Text style={styles.modalPaymentText}>
+                      ₱{(parseFloat(selectedRequest.deliveryFee) + parseFloat(selectedRequest.price || '0')).toFixed(2)}
+                    </Text>
                   </View>
-                  <Text style={styles.modalServiceTitle}>{selectedRequest.service}</Text>
+                  <Text style={styles.modalServiceTitle} numberOfLines={1}>
+                    {selectedRequest.type === 'PAHATOD' && selectedRequest.details?.rideService === true ? 'Passenger transit ride' : `${selectedRequest.type} shopping & delivery`}
+                  </Text>
                   <View style={styles.modalMetaRow}>
                     <Clock size={14} color="#9CA3AF" />
-                    <Text style={styles.modalMetaText}>Posted {selectedRequest.time} • Review details</Text>
+                    <Text style={styles.modalMetaText}>Est: {selectedRequest.estimatedDistance.toFixed(1)} km • Pay: {selectedRequest.details?.paymentMethod || 'WALLET'}</Text>
                   </View>
                 </View>
 
@@ -281,7 +449,7 @@ export default function RiderDashboardScreen() {
                       </View>
                       <View>
                         <Text style={styles.blockSublabel}>CUSTOMER</Text>
-                        <Text style={styles.blockLabel}>{selectedRequest.customer}</Text>
+                        <Text style={styles.blockLabel}>{selectedRequest.customer?.name || 'Client'}</Text>
                       </View>
                     </View>
                     <View style={styles.customerActions}>
@@ -303,32 +471,40 @@ export default function RiderDashboardScreen() {
                       <Text style={styles.blockTitle}>Request Details</Text>
                     </View>
 
-                    {selectedRequest.type === 'Pabili' && (
+                    {selectedRequest.type === 'PABILI' && selectedRequest.details?.itemsList && (
                       <View style={styles.itemListBox}>
-                        {selectedRequest.details.items.map((item: string, i: number) => (
+                        {selectedRequest.details.itemsList.map((item: any, i: number) => (
                           <View key={i} style={styles.itemRow}>
                             <Text style={styles.itemDot}>•</Text>
-                            <Text style={styles.itemText}>{item}</Text>
+                            <Text style={styles.itemText}>{item.qty}x {item.name} {item.notes && `(${item.notes})`}</Text>
                           </View>
                         ))}
                       </View>
                     )}
 
-                    {selectedRequest.type === 'Pasugo' && (
+                    {selectedRequest.type === 'PASUGO' && (
                       <View style={styles.itemListBox}>
                         <Text style={styles.pasugoRowText}>
-                          <Text style={styles.boldLabel}>Action: </Text>{selectedRequest.details.action}
+                          <Text style={styles.boldLabel}>Task: </Text>{selectedRequest.details?.taskDetails || 'Cash Errand'}
                         </Text>
                         <Text style={styles.pasugoRowText}>
-                          <Text style={styles.boldLabel}>Amount: </Text>{selectedRequest.details.amount}
+                          <Text style={styles.boldLabel}>Errand Budget: </Text>₱{Number(selectedRequest.price).toFixed(2)}
                         </Text>
                       </View>
                     )}
 
-                    {selectedRequest.type === 'Pahatod' && (
+                    {selectedRequest.type === 'PAHATOD' && (
                       <View style={styles.itemListBox}>
                         <Text style={styles.pasugoRowText}>
-                          <Text style={styles.boldLabel}>Item: </Text>{selectedRequest.details.item}
+                          <Text style={styles.boldLabel}>Item: </Text>{selectedRequest.details?.itemDescription || 'Courier package'}
+                        </Text>
+                      </View>
+                    )}
+
+                    {selectedRequest.type === 'PAKUHA' && (
+                      <View style={styles.itemListBox}>
+                        <Text style={styles.pasugoRowText}>
+                          <Text style={styles.boldLabel}>Item: </Text>{selectedRequest.details?.packageDetails || 'Package pickup'}
                         </Text>
                       </View>
                     )}
@@ -346,22 +522,16 @@ export default function RiderDashboardScreen() {
                     <View style={styles.addressContainer}>
                       <View style={styles.addressSubBlock}>
                         <Text style={styles.addressLabel}>PICKUP</Text>
-                        <Text style={styles.addressValue}>{selectedRequest.details.pickupAddress}</Text>
+                        <Text style={styles.addressValue}>{selectedRequest.pickupAddress}</Text>
                       </View>
 
                       <View style={styles.addressDivider} />
 
                       <View style={styles.addressSubBlock}>
                         <Text style={styles.addressLabel}>DROP-OFF</Text>
-                        <Text style={styles.addressValue}>{selectedRequest.details.deliveryAddress}</Text>
+                        <Text style={styles.addressValue}>{selectedRequest.dropoffAddress}</Text>
                       </View>
                     </View>
-                  </View>
-
-                  {/* Customer Notes */}
-                  <View style={styles.notesBlock}>
-                    <Text style={styles.notesLabel}>CUSTOMER NOTES</Text>
-                    <Text style={styles.notesValue}>"{selectedRequest.details.notes}"</Text>
                   </View>
 
                 </ScrollView>
@@ -376,10 +546,7 @@ export default function RiderDashboardScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.modalAcceptButton}
-                    onPress={() => {
-                      setSelectedRequest(null);
-                      router.push(`/rider/delivery/${selectedRequest.id}` as any);
-                    }}
+                    onPress={() => handleAcceptJob(selectedRequest.id)}
                   >
                     <Text style={styles.modalAcceptButtonText}>ACCEPT JOB</Text>
                   </TouchableOpacity>
@@ -582,7 +749,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   statValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
@@ -610,7 +777,7 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#D4AF37',
+    backgroundColor: '#10B981',
   },
   bannerTitle: {
     fontSize: 15,
@@ -677,6 +844,7 @@ const styles = StyleSheet.create({
   cardHeaderLeft: {
     flexDirection: 'row',
     gap: 12,
+    flex: 1,
   },
   cardIconWrapper: {
     width: 42,
@@ -695,13 +863,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3E8FF', // purple-100
   },
   cardServiceTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#1F2937',
     marginBottom: 2,
   },
   cardCustomerText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#6B7280',
   },
   paymentBadge: {
@@ -711,7 +879,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   paymentBadgeText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
     color: '#D4AF37',
   },
@@ -722,6 +890,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
     paddingTop: 12,
+    gap: 8,
   },
   cardMetaRow: {
     flexDirection: 'row',
@@ -733,7 +902,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   cardMetaText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6B7280',
     fontWeight: '500',
   },
@@ -777,7 +946,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   weeklySummaryValue: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
@@ -798,60 +967,58 @@ const styles = StyleSheet.create({
   modalHeader: {
     backgroundColor: '#050A18',
     padding: 24,
+    gap: 8,
   },
   modalHeaderTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
   },
   modalBadge: {
-    backgroundColor: '#D4AF37',
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    paddingHorizontal: 10,
     paddingVertical: 4,
+    borderRadius: 6,
   },
   modalBadgeText: {
-    color: '#050A18',
+    color: '#D4AF37',
+    fontSize: 10,
     fontWeight: '900',
-    fontSize: 11,
-    letterSpacing: 0.5,
   },
   modalPaymentText: {
-    color: '#D4AF37',
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '900',
+    color: '#FFFFFF',
   },
   modalServiceTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    fontStyle: 'italic',
-    marginBottom: 6,
   },
   modalMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginTop: 4,
   },
   modalMetaText: {
+    fontSize: 11,
     color: '#9CA3AF',
-    fontSize: 12,
+    fontWeight: '500',
   },
   modalBody: {
     padding: 24,
-    gap: 20,
   },
   customerBlock: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    marginBottom: 20,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
   customerInfoLeft: {
     flexDirection: 'row',
@@ -859,10 +1026,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   customerIconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 50,
-    backgroundColor: '#F3F4F6',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 71, 171, 0.05)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -870,11 +1037,11 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '900',
     color: '#9CA3AF',
-    letterSpacing: 1.5,
+    letterSpacing: 1,
     marginBottom: 2,
   },
   blockLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#1F2937',
   },
@@ -885,69 +1052,62 @@ const styles = StyleSheet.create({
   actionIconButton: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 18,
     backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
   },
   detailsBlock: {
-    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
   blockHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 10,
+    gap: 8,
+    marginBottom: 12,
   },
   blockHeaderIcon: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
   blockTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#374151',
   },
   itemListBox: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 14,
-    padding: 16,
     gap: 8,
   },
   itemRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
   },
   itemDot: {
-    color: '#D4AF37',
-    fontWeight: 'bold',
-    fontSize: 16,
+    color: '#4B5563',
   },
   itemText: {
+    fontSize: 13,
     color: '#4B5563',
-    fontSize: 14,
+    fontWeight: '500',
   },
   pasugoRowText: {
+    fontSize: 13,
     color: '#4B5563',
-    fontSize: 14,
-    marginBottom: 4,
   },
   boldLabel: {
-    fontWeight: '700',
+    fontWeight: 'bold',
     color: '#1F2937',
   },
   addressContainer: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 14,
-    padding: 16,
+    gap: 12,
   },
   addressSubBlock: {
     gap: 4,
@@ -956,178 +1116,281 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '900',
     color: '#9CA3AF',
-    letterSpacing: 1.5,
+    letterSpacing: 1,
   },
   addressValue: {
-    fontSize: 14,
-    color: '#4B5563',
+    fontSize: 13,
+    color: '#374151',
     fontWeight: '500',
   },
   addressDivider: {
     height: 1,
-    backgroundColor: '#F3F4F6',
-    marginVertical: 12,
-  },
-  notesBlock: {
-    backgroundColor: '#FEF9C3', // yellow-100
-    borderWidth: 1,
-    borderColor: '#FEF08A', // yellow-200
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-  },
-  notesLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#854D0E', // yellow-800
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  notesValue: {
-    fontSize: 14,
-    color: '#713F12',
-    fontStyle: 'italic',
-    lineHeight: 20,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  detailIcon: {
-    marginRight: 12,
-    marginTop: 2,
-  },
-  detailText: {
-    fontSize: 14,
-    color: '#374151',
-    flex: 1,
-    lineHeight: 20,
+    backgroundColor: '#E5E7EB',
   },
   modalFooter: {
     flexDirection: 'row',
-    padding: 24,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: '#E5E7EB',
+    padding: 24,
     gap: 12,
+    backgroundColor: '#FFFFFF',
   },
-  rejectButton: {
+  closeButton: {
     flex: 1,
-    paddingVertical: 16,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rejectButtonText: {
+  closeButtonText: {
     color: '#4B5563',
-    fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '800',
+    fontSize: 12,
   },
-  acceptButton: {
+  modalAcceptButton: {
     flex: 2,
-    paddingVertical: 16,
-    borderRadius: 16,
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#0047AB',
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    shadowColor: '#1E3A8A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
-  acceptButtonText: {
+  modalAcceptButtonText: {
     color: '#FFFFFF',
-    fontSize: 15,
     fontWeight: '800',
+    fontSize: 12,
   },
   availabilitySettingCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   settingRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
   settingInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
     flex: 1,
   },
   modalIconBox: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
   settingLabel: {
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: 'bold',
     color: '#1F2937',
   },
   settingDesc: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    color: '#9CA3AF',
     marginTop: 2,
   },
   toggleBtn: {
-    width: 52,
-    height: 32,
-    borderRadius: 16,
+    width: 50,
+    height: 28,
+    borderRadius: 14,
     padding: 2,
-    justifyContent: 'center',
   },
   toggleBtnActive: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#10B981',
   },
   toggleBtnInactive: {
     backgroundColor: '#E5E7EB',
   },
   toggleKnob: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
   toggleKnobActive: {
-    transform: [{ translateX: 20 }],
+    alignSelf: 'flex-end',
   },
   toggleKnobInactive: {
-    transform: [{ translateX: 0 }],
+    alignSelf: 'flex-start',
   },
-  modalAcceptButton: {
-    backgroundColor: '#1E3A8A',
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1F2937',
   },
   modalAcceptText: {
     color: '#FFFFFF',
-    fontSize: 15,
     fontWeight: '800',
+    fontSize: 12,
   },
-  closeButton: {
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
+  emptyRequestsCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    borderRadius: 20,
+    padding: 32,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  emptyRequestsTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  emptyRequestsDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: 12,
+  },
+  activeSection: {
+    marginBottom: 20,
+  },
+  activeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  activeSectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#050A18',
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EF4444',
+  },
+  liveText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#EF4444',
+  },
+  activeCard: {
+    backgroundColor: '#050A18',
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.2)',
+  },
+  activeCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  activeCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  activeIconBg: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(212,175,55,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.25)',
+  },
+  activeCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  activeCardSub: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  activePriceBadge: {
+    backgroundColor: 'rgba(212,175,55,0.12)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.2)',
+  },
+  activePriceText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#D4AF37',
+  },
+  activeCardDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    marginVertical: 12,
+  },
+  activeCardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  activeStatusWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activeStatusIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  activeStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  viewMissionButton: {
+    backgroundColor: '#D4AF37',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  viewMissionButtonText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#050A18',
+  },
+  directRequestBadge: {
+    backgroundColor: '#D4AF37',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  directRequestText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#050A18',
   },
 });

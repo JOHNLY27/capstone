@@ -7,22 +7,84 @@ import {
   ScrollView, 
   TextInput,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ArrowLeft, Package, MapPin } from 'lucide-react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { ArrowLeft, Package, MapPin, DollarSign, Wallet } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authStore } from '../../utils/auth-store';
+import { API_URL } from '../../constants/api';
 
 export default function PakuhaServiceScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const targetRiderId = params.targetRiderId as string;
+  const targetRiderName = params.targetRiderName as string;
+
   const insets = useSafeAreaInsets();
   const [item, setItem] = useState('');
   const [pickup, setPickup] = useState('');
   const [dropoff, setDropoff] = useState('');
 
-  const handleDispatch = () => {
-    router.push('/customer/orders');
+  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'COD'>('WALLET');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleDispatch = async () => {
+    if (!item || !pickup || !dropoff) {
+      Alert.alert('Validation Error', 'Please enter item details, pickup point, and drop-off destination.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = authStore.getToken();
+      
+      const payload = {
+        type: 'PAKUHA',
+        pickupAddress: pickup.trim(),
+        dropoffAddress: dropoff.trim(),
+        pickupCoords: { latitude: 8.9475, longitude: 125.5406 }, // default Butuan City
+        dropoffCoords: { latitude: 8.9415, longitude: 125.5390 },
+        estimatedDistance: 2.1, // simulated 2.1km
+        price: 0.00,
+        details: {
+          packageDetails: item.trim(),
+          paymentMethod,
+          ...(targetRiderId ? { targetedRiderId, targetedRiderName: decodeURIComponent(targetRiderName) } : {})
+        }
+      };
+
+      const response = await fetch(`${API_URL}/api/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to dispatch pickup.');
+      }
+
+      Alert.alert(
+        'Pickup Dispatched', 
+        `Your Pakuha request has been successfully created via ${paymentMethod === 'WALLET' ? 'Wallet' : 'Cash on Delivery'}!`,
+        [
+          { text: 'Track Order', onPress: () => router.push('/customer/orders') }
+        ]
+      );
+    } catch (err: any) {
+      console.error('Pakuha dispatch error:', err);
+      Alert.alert('Dispatch Failed', err.message || 'Unable to connect to server. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -56,6 +118,16 @@ export default function PakuhaServiceScreen() {
       >
         <View style={styles.body}>
           
+          {/* Direct booking banner */}
+          {targetRiderId && (
+            <View style={styles.directBookingBanner}>
+              <Text style={styles.directBookingTitle}>🎯 DIRECT BOOKING REQUEST</Text>
+              <Text style={styles.directBookingDesc}>
+                This errand is locked directly to your favorite pilot: <Text style={{ fontWeight: 'bold' }}>{decodeURIComponent(targetRiderName)}</Text>. Only they will be able to accept it!
+              </Text>
+            </View>
+          )}
+
           {/* Package details */}
           <Text style={styles.sectionTitle}>Package Details</Text>
           <View style={styles.formCard}>
@@ -97,13 +169,58 @@ export default function PakuhaServiceScreen() {
             </View>
           </View>
 
+          {/* Payment Method Selector */}
+          <Text style={styles.sectionTitle}>Payment Method</Text>
+          <View style={styles.paymentSelectorContainer}>
+            <TouchableOpacity
+              style={[
+                styles.paymentCard,
+                paymentMethod === 'WALLET' && styles.activePaymentCard
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setPaymentMethod('WALLET')}
+            >
+              <View style={styles.paymentHeader}>
+                <Wallet size={16} color={paymentMethod === 'WALLET' ? '#0047AB' : '#9CA3AF'} />
+                <Text style={[styles.paymentText, paymentMethod === 'WALLET' && styles.activePaymentText]}>
+                  Wallet
+                </Text>
+              </View>
+              <Text style={styles.paymentSubtext}>
+                Bal: ₱{parseFloat(authStore.getUser()?.walletBalance || '0').toFixed(2)}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.paymentCard,
+                paymentMethod === 'COD' && styles.activePaymentCard
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setPaymentMethod('COD')}
+            >
+              <View style={styles.paymentHeader}>
+                <DollarSign size={16} color={paymentMethod === 'COD' ? '#D4AF37' : '#9CA3AF'} />
+                <Text style={[styles.paymentText, paymentMethod === 'COD' && styles.activePaymentText]}>
+                  Cash (COD)
+                </Text>
+              </View>
+              <Text style={styles.paymentSubtext}>Pay physically to rider</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Dispatch */}
           <TouchableOpacity 
             style={styles.dispatchButton}
             activeOpacity={0.9}
             onPress={handleDispatch}
+            disabled={isLoading}
           >
-            <Text style={styles.dispatchText}>DISPATCH PICKUP</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.dispatchText}>DISPATCH PICKUP</Text>
+            )}
           </TouchableOpacity>
 
         </View>
@@ -208,7 +325,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     padding: 16,
     gap: 12,
-    marginBottom: 28,
+    marginBottom: 24,
   },
   locationField: {
     flexDirection: 'row',
@@ -218,6 +335,44 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 12,
     paddingHorizontal: 12,
+  },
+  paymentSelectorContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 28,
+  },
+  paymentCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    borderRadius: 16,
+    padding: 14,
+    gap: 4,
+  },
+  activePaymentCard: {
+    borderColor: '#0047AB',
+    backgroundColor: 'rgba(0, 71, 171, 0.02)',
+  },
+  paymentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  paymentText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+  },
+  activePaymentText: {
+    color: '#0047AB',
+  },
+  paymentSubtext: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: '600',
+    marginTop: 2,
   },
   dispatchButton: {
     backgroundColor: '#0047AB',
@@ -235,5 +390,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.5,
+  },
+  directBookingBanner: {
+    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+  },
+  directBookingTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#D4AF37',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  directBookingDesc: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 18,
   },
 });
