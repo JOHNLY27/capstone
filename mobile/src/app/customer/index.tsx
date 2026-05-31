@@ -11,7 +11,7 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ShoppingBag, Send, Package, Navigation, Bell, MapPin, Bike, Wallet } from 'lucide-react-native';
+import { ShoppingBag, Send, Package, Navigation, Bell, MapPin, Bike, MessageSquare } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authStore } from '../../utils/auth-store';
@@ -138,14 +138,12 @@ export default function CustomerDashboardScreen() {
               
               <View style={styles.headerRight}>
                 <TouchableOpacity 
-                  style={styles.walletChip}
+                  style={styles.chatsChip}
                   activeOpacity={0.8}
-                  onPress={() => router.push('/customer/wallet')}
+                  onPress={() => router.push('/customer/support-chat')}
                 >
-                  <Wallet size={14} color="#D4AF37" />
-                  <Text style={styles.walletBalanceText}>
-                    ₱{Number(user?.walletBalance || 0).toFixed(2)}
-                  </Text>
+                  <MessageSquare size={14} color="#D4AF37" fill="#D4AF37" />
+                  <Text style={styles.chatsChipText}>CHATS</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -338,7 +336,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  walletChip: {
+  chatsChip: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
@@ -349,10 +347,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 6,
   },
-  walletBalanceText: {
+  chatsChipText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '900',
+    letterSpacing: 0.5,
   },
   notificationButton: {
     padding: 10,

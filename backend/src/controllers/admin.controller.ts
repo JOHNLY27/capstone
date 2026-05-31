@@ -1,4 +1,6 @@
 import { Response, NextFunction } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 
@@ -227,29 +229,77 @@ export const verifyWithdrawal = async (
     const updatedTx = await prisma.$transaction(async (tx) => {
       if (status === 'APPROVED') {
         // Mark as SUCCESS
-        return await tx.walletTransaction.update({
+        const updated = await tx.walletTransaction.update({
           where: { id },
           data: {
             status: 'SUCCESS',
             description: txRecord.description.replace(' (Pending Approval)', ' - Approved by Admin'),
           },
         });
+
+        // If it's a rider weekly dues payment, extend their subscription:
+        if (txRecord.description.startsWith('Rider Weekly Platform Fee')) {
+          const rider = await tx.user.findUnique({ where: { id: txRecord.userId } });
+          if (rider) {
+            const currentSettings: any = rider.settings || {};
+            const originalDueDateStr = currentSettings.feeDueDate;
+            let baseDate = new Date();
+            if (originalDueDateStr) {
+              const origDate = new Date(originalDueDateStr);
+              if (origDate > new Date()) {
+                baseDate = origDate;
+              }
+            }
+            const newDueDate = new Date(baseDate.getTime() + 7 * 24 * 60 * 60 * 1000); // add 7 days
+
+            const updatedSettings = {
+              ...currentSettings,
+              weeklyFeeStatus: 'PAID',
+              feeDueDate: newDueDate.toISOString(),
+              lastSettleRef: txRecord.referenceCode,
+            };
+
+            await tx.user.update({
+              where: { id: txRecord.userId },
+              data: { settings: updatedSettings },
+            });
+          }
+        }
+
+        return updated;
       } else {
-        // Mark as FAILED and refund the user
-        const amount = Number(txRecord.amount);
-        
-        await tx.user.update({
-          where: { id: txRecord.userId },
-          data: {
-            walletBalance: { increment: amount },
-          },
-        });
+        // Mark as FAILED
+        // Refund digital wallet balance ONLY for traditional wallet withdrawals (not platform dues)
+        if (!txRecord.description.startsWith('Rider Weekly Platform Fee')) {
+          const amount = Number(txRecord.amount);
+          
+          await tx.user.update({
+            where: { id: txRecord.userId },
+            data: {
+              walletBalance: { increment: amount },
+            },
+          });
+        } else {
+          // If rider Platform fee was rejected, reset their status to OVERDUE
+          const rider = await tx.user.findUnique({ where: { id: txRecord.userId } });
+          if (rider) {
+            const currentSettings: any = rider.settings || {};
+            const updatedSettings = {
+              ...currentSettings,
+              weeklyFeeStatus: 'OVERDUE',
+            };
+            await tx.user.update({
+              where: { id: txRecord.userId },
+              data: { settings: updatedSettings },
+            });
+          }
+        }
 
         return await tx.walletTransaction.update({
           where: { id },
           data: {
             status: 'FAILED',
-            description: txRecord.description.replace(' (Pending Approval)', ' - Rejected by Admin (Refunded)'),
+            description: txRecord.description.replace(' (Pending Approval)', ' - Rejected by Admin'),
           },
         });
       }
@@ -258,6 +308,37 @@ export const verifyWithdrawal = async (
     res.status(200).json({
       success: true,
       data: { transaction: updatedTx },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const updateSystemSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { gcashNumber, gcashQrCode } = req.body;
+
+    if (!gcashNumber) {
+      res.status(400).json({ success: false, error: 'GCash Mobile Number is required.' });
+      return;
+    }
+
+    const settingsFile = path.join(process.cwd(), 'system-settings.json');
+    const newSettings = {
+      gcashNumber: gcashNumber.trim(),
+      gcashQrCode: gcashQrCode || '',
+    };
+
+    fs.writeFileSync(settingsFile, JSON.stringify(newSettings, null, 2), 'utf8');
+
+    res.status(200).json({
+      success: true,
+      message: 'GCash platform settings updated successfully.',
+      data: newSettings,
     });
   } catch (err) {
     next(err);

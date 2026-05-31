@@ -12,10 +12,11 @@ import {
   Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Send, MessageSquare, ShieldCheck, Clock } from 'lucide-react-native';
+import { ArrowLeft, Send, MessageSquare, ShieldCheck, Clock, Bike, ChevronRight } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authStore } from '../../utils/auth-store';
+import { persistentStorage } from '../../utils/persistent-storage';
 import { API_URL } from '../../constants/api';
 
 export default function SupportChatScreen() {
@@ -28,6 +29,10 @@ export default function SupportChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+
+  const [activeView, setActiveView] = useState<'inbox' | 'admin'>('inbox');
+  const [activeRiderChats, setActiveRiderChats] = useState<any[]>([]);
+  const [recentRiderChats, setRecentRiderChats] = useState<any[]>([]);
 
   const fetchMessages = async (silent = false) => {
     const token = authStore.getToken();
@@ -52,12 +57,45 @@ export default function SupportChatScreen() {
     }
   };
 
+  const fetchActiveRiderChats = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/orders/customer`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const resData = await response.json();
+
+      if (response.ok && resData.success) {
+        const allOrders = resData.data.orders || [];
+        const active = allOrders.filter((o: any) => 
+          (o.status === 'ACCEPTED' || o.status === 'IN_TRANSIT') && o.riderId
+        );
+        const recent = allOrders.filter((o: any) => 
+          (o.status === 'COMPLETED' || o.status === 'CANCELLED') && o.riderId
+        );
+        setActiveRiderChats(active);
+        setRecentRiderChats(recent);
+      }
+    } catch (e) {
+      console.error('Error fetching active rider chats:', e);
+    }
+  };
+
   useEffect(() => {
     fetchMessages();
+    fetchActiveRiderChats();
     
     // Poll every 3 seconds for live administrative replies
     const interval = setInterval(() => fetchMessages(true), 3000);
-    return () => clearInterval(interval);
+    // Poll every 8 seconds for active rider chats
+    const chatsInterval = setInterval(fetchActiveRiderChats, 8000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(chatsInterval);
+    };
   }, []);
 
   // Auto-scroll to bottom when new messages arrive
@@ -68,6 +106,14 @@ export default function SupportChatScreen() {
       }, 200);
     }
   }, [messages]);
+
+  // Automatically mark admin messages as read when viewed
+  useEffect(() => {
+    if (activeView === 'admin' && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      persistentStorage.setItem('@last_seen_admin_msg_id', lastMsg.id).catch(() => {});
+    }
+  }, [activeView, messages]);
 
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
@@ -135,6 +181,145 @@ export default function SupportChatScreen() {
 
   const currentUser = authStore.getUser();
 
+  if (activeView === 'inbox') {
+    return (
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        
+        {/* Header */}
+        <View style={[styles.header, { paddingTop: insets.top || 20 }]}>
+          <View style={styles.headerContent}>
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerTitle}>Messages Inbox</Text>
+              <Text style={styles.headerSubtitle}>Unified Communication Center</Text>
+            </View>
+          </View>
+        </View>
+
+        <ScrollView 
+          style={styles.chatArea}
+          contentContainerStyle={styles.inboxContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.inboxSectionTitle}>Official Channels</Text>
+          
+          <TouchableOpacity 
+            style={styles.inboxCard} 
+            activeOpacity={0.8}
+            onPress={() => setActiveView('admin')}
+          >
+            <View style={styles.inboxAvatarWrapper}>
+              <ShieldCheck size={24} color="#D4AF37" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.inboxHeaderRow}>
+                <Text style={styles.inboxName}>{adminInfo?.name || 'FetchMeUp Admin Support'}</Text>
+                <View style={styles.supportBadge}>
+                  <Text style={styles.supportBadgeText}>SUPPORT</Text>
+                </View>
+              </View>
+              <Text style={styles.inboxLastMsg} numberOfLines={1}>
+                {messages.length > 0 ? messages[messages.length - 1].message : "Chat securely with our official administrative help desk."}
+              </Text>
+            </View>
+            <ChevronRight size={18} color="#C7C7CC" />
+          </TouchableOpacity>
+
+          <Text style={styles.inboxSectionTitle}>Active Errand Pilots</Text>
+          
+          {activeRiderChats.length === 0 ? (
+            <View style={styles.emptyInboxCard}>
+              <MessageSquare size={32} color="#D1D5DB" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyInboxTitle}>No Active Rider Chats</Text>
+              <Text style={styles.emptyInboxDesc}>Book a pahatod, pabili, pasugo, or ride errand in Butuan City to message your pilot partner in real-time!</Text>
+            </View>
+          ) : (
+            activeRiderChats.map((order: any) => {
+              const riderName = order.rider?.name || 'Assigned Pilot';
+              const serviceLabel = order.type === 'PAHATOD' && order.details?.rideService === true ? 'FMU RIDE' : order.type;
+              
+              return (
+                <TouchableOpacity 
+                  key={order.id} 
+                  style={styles.inboxCard} 
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/chat/${order.id}` as any)}
+                >
+                  <View style={[styles.inboxAvatarWrapper, { backgroundColor: 'rgba(0, 71, 171, 0.05)' }]}>
+                    <Bike size={24} color="#0047AB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.inboxHeaderRow}>
+                      <Text style={styles.inboxName}>Rider: {riderName}</Text>
+                      <View style={[styles.supportBadge, { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.25)' }]}>
+                        <Text style={[styles.supportBadgeText, { color: '#10B981' }]}>ACTIVE</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.inboxLastMsg} numberOfLines={1}>
+                      {serviceLabel} Errand to: {order.dropoffAddress.split(',')[0]} (Tap to chat)
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color="#C7C7CC" />
+                </TouchableOpacity>
+              );
+            })
+          )}
+
+          <Text style={styles.inboxSectionTitle}>Recent Errand Chats</Text>
+          
+          {recentRiderChats.length === 0 ? (
+            <View style={styles.emptyInboxCard}>
+              <MessageSquare size={32} color="#D1D5DB" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyInboxTitle}>No Recent Chats</Text>
+              <Text style={styles.emptyInboxDesc}>Your completed or cancelled errand chats will be listed here for review.</Text>
+            </View>
+          ) : (
+            recentRiderChats.map((order: any) => {
+              const riderName = order.rider?.name || 'Past Pilot';
+              const serviceLabel = order.type === 'PAHATOD' && order.details?.rideService === true ? 'FMU RIDE' : order.type;
+              const isCompleted = order.status === 'COMPLETED';
+              
+              return (
+                <TouchableOpacity 
+                  key={order.id} 
+                  style={styles.inboxCard} 
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/chat/${order.id}` as any)}
+                >
+                  <View style={[styles.inboxAvatarWrapper, { backgroundColor: 'rgba(107, 114, 128, 0.05)' }]}>
+                    <Bike size={24} color="#6B7280" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.inboxHeaderRow}>
+                      <Text style={styles.inboxName}>Rider: {riderName}</Text>
+                      <View style={[
+                        styles.supportBadge, 
+                        isCompleted 
+                          ? { backgroundColor: 'rgba(16, 185, 129, 0.05)', borderColor: 'rgba(16, 185, 129, 0.15)' }
+                          : { backgroundColor: 'rgba(239, 68, 68, 0.05)', borderColor: 'rgba(239, 68, 68, 0.15)' }
+                      ]}>
+                        <Text style={[
+                          styles.supportBadgeText, 
+                          isCompleted ? { color: '#10B981' } : { color: '#EF4444' }
+                        ]}>
+                          {order.status}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.inboxLastMsg} numberOfLines={1}>
+                      {serviceLabel} Errand to: {order.dropoffAddress.split(',')[0]} (Tap to view history)
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color="#C7C7CC" />
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView 
       style={styles.container}
@@ -149,7 +334,7 @@ export default function SupportChatScreen() {
           <TouchableOpacity 
             style={styles.backButton}
             activeOpacity={0.7}
-            onPress={() => router.back()}
+            onPress={() => setActiveView('inbox')}
           >
             <ArrowLeft size={20} color="#D4AF37" />
           </TouchableOpacity>
@@ -180,7 +365,7 @@ export default function SupportChatScreen() {
             </View>
             <Text style={styles.emptyTitle}>FetchMeUp Official Support</Text>
             <Text style={styles.emptyDesc}>
-              Ask a question about active dispatches, wallets, cash-outs, or general system inquiries. An administrative officer will reply shortly in this secure live thread.
+              Ask a question about active dispatches, COD transactions, courier rates, or general system inquiries. An administrative officer will reply shortly in this secure live thread.
             </Text>
           </View>
         ) : (
@@ -453,5 +638,100 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#9CA3AF',
+  },
+  inboxContent: {
+    padding: 24,
+    gap: 12,
+  },
+  inboxSectionTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#9CA3AF',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  inboxCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 20,
+    padding: 16,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  inboxAvatarWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inboxHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  inboxName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  supportBadge: {
+    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderRadius: 50,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  supportBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#D4AF37',
+    letterSpacing: 0.5,
+  },
+  inboxLastMsg: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  emptyInboxCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+    marginTop: 8,
+  },
+  emptyInboxTitle: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  emptyInboxDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: 8,
+    fontWeight: '500',
   },
 });

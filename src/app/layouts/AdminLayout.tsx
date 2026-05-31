@@ -72,7 +72,7 @@ export const AdminLayout: React.FC = () => {
       badge: pendingCount > 0 ? pendingCount : undefined
     },
     {
-      label: 'Withdrawals',
+      label: 'Rider Weekly Dues',
       path: '/admin/withdrawals',
       icon: <DollarSign className="w-5 h-5" />,
       badge: pendingWithdrawalsCount > 0 ? pendingWithdrawalsCount : undefined

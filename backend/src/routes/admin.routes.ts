@@ -6,6 +6,7 @@ import {
   verifyRiderDocument,
   getPendingWithdrawals,
   verifyWithdrawal,
+  updateSystemSettings,
 } from '../controllers/admin.controller.js';
 import { authenticate, authorizeRoles } from '../middlewares/auth.middleware.js';
 
@@ -21,5 +22,6 @@ router.get('/documents', getRiderDocuments);
 router.put('/documents/:id/verify', verifyRiderDocument);
 router.get('/withdrawals', getPendingWithdrawals);
 router.put('/withdrawals/:id/verify', verifyWithdrawal);
+router.put('/settings', updateSystemSettings);
 
 export { router as adminRouter };

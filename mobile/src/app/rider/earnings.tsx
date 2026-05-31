@@ -7,10 +7,13 @@ import {
   ScrollView, 
   Platform,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  Image
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { DollarSign, TrendingUp, Calendar, Download, ChevronLeft } from 'lucide-react-native';
+import { DollarSign, TrendingUp, Calendar, Download, ChevronLeft, ShieldCheck, AlertTriangle } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authStore } from '../../utils/auth-store';
@@ -28,6 +31,15 @@ export default function RiderEarningsScreen() {
   const [orders, setOrders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
+
+  const [subscriptionInfo, setSubscriptionInfo] = useState<any>(null);
+  const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
+  const [refCode, setRefCode] = useState('');
+  
+  const [systemSettings, setSystemSettings] = useState<any>({
+    gcashNumber: '0912 - 345 - 6789',
+    gcashQrCode: ''
+  });
 
   const [periodStats, setPeriodStats] = useState({
     daily: { amount: "₱0", orders: 0, avg: "₱0" },
@@ -94,6 +106,78 @@ export default function RiderEarningsScreen() {
     });
   };
 
+  const fetchSubscriptionStatus = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/auth/weekly-fee-status`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSubscriptionInfo({
+          weeklyFeeStatus: data.weeklyFeeStatus,
+          feeDueDate: data.feeDueDate,
+          pendingTicket: data.pendingTicket
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching subscription status:', e);
+    }
+  };
+
+  const fetchSystemSettings = async () => {
+    const token = authStore.getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/auth/system-settings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSystemSettings({
+          gcashNumber: data.data.gcashNumber || '0912 - 345 - 6789',
+          gcashQrCode: data.data.gcashQrCode || ''
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching system settings:', e);
+    }
+  };
+
+  const handleSettleSubmit = async () => {
+    if (refCode.trim().length !== 13) return;
+    setIsActionLoading(true);
+    const token = authStore.getToken();
+    try {
+      const response = await fetch(`${API_URL}/api/auth/settle-weekly-fee`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ referenceCode: refCode.trim() })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        Alert.alert('Remittance Logged', 'Your GCash reference has been submitted! Dues will be audited shortly by the Administrator.');
+        setIsSettleModalOpen(false);
+        setRefCode('');
+        fetchSubscriptionStatus();
+        fetchEarningsData();
+      } else {
+        Alert.alert('Error', data.error || 'Failed to submit settlement details.');
+      }
+    } catch (e) {
+      console.error('Error settling dues:', e);
+      Alert.alert('Error', 'Unable to connect to server.');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const fetchEarningsData = async () => {
     const token = authStore.getToken();
     if (!token) return;
@@ -138,98 +222,9 @@ export default function RiderEarningsScreen() {
 
   useEffect(() => {
     fetchEarningsData();
+    fetchSubscriptionStatus();
+    fetchSystemSettings();
   }, []);
-
-  const handleCashOut = () => {
-    const balanceNum = parseFloat(balance);
-    if (balanceNum <= 0) {
-      Alert.alert('Cash Out Unavailable', 'Your digital wallet balance is ₱0.00. You must have completed online payment orders to withdraw.');
-      return;
-    }
-
-    Alert.alert(
-      'Cash Out Channel',
-      'Select your payout destination:',
-      [
-        {
-          text: 'GCash',
-          onPress: () => promptWithdrawalAmount('GCash'),
-        },
-        {
-          text: 'Maya',
-          onPress: () => promptWithdrawalAmount('Maya'),
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        }
-      ]
-    );
-  };
-
-  const promptWithdrawalAmount = (method: 'GCash' | 'Maya') => {
-    Alert.prompt(
-      `Withdraw to ${method}`,
-      `Enter withdrawal amount in PHP (Available: ₱${parseFloat(balance).toLocaleString()}):`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Withdraw Funds',
-          onPress: async (amountStr) => {
-            const amount = parseFloat(amountStr || '0');
-            if (isNaN(amount) || amount <= 0) {
-              Alert.alert('Invalid Amount', 'Please enter a valid amount greater than 0.');
-              return;
-            }
-
-            const balanceNum = parseFloat(balance);
-            if (amount > balanceNum) {
-              Alert.alert('Insufficient Funds', `You cannot withdraw more than your available balance of ₱${balanceNum.toFixed(2)}.`);
-              return;
-            }
-
-            setIsActionLoading(true);
-            try {
-              const token = authStore.getToken();
-              const response = await fetch(`${API_URL}/api/wallet/withdraw`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                  amount,
-                  method
-                })
-              });
-
-              const resData = await response.json();
-
-              if (!response.ok) {
-                throw new Error(resData.error || 'Failed to process withdrawal.');
-              }
-
-              Alert.alert(
-                'Withdrawal Successful', 
-                `₱${amount.toFixed(2)} has been successfully transferred to your ${method} account!`
-              );
-              fetchEarningsData();
-            } catch (err: any) {
-              Alert.alert('Cash Out Failed', err.message || 'Server connection error.');
-            } finally {
-              setIsActionLoading(false);
-            }
-          },
-        },
-      ],
-      'plain-text',
-      '',
-      'number-pad'
-    );
-  };
 
   const currentEarnings = periodStats[period];
 
@@ -305,30 +300,77 @@ export default function RiderEarningsScreen() {
           </View>
         ) : (
           <View style={styles.body}>
-            {/* Withdraw Card */}
-            <View style={styles.withdrawCard}>
-              <View style={styles.withdrawLeft}>
-                <View style={styles.withdrawIconWrapper}>
-                  <TrendingUp size={22} color="#D4AF37" />
-                </View>
-                <View>
-                  <Text style={styles.withdrawTitle}>Withdraw Funds</Text>
-                  <Text style={styles.withdrawDesc}>Available: ₱{parseFloat(balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
-                </View>
-              </View>
-              <TouchableOpacity 
-                style={styles.cashOutButton}
-                activeOpacity={0.9}
-                onPress={handleCashOut}
-                disabled={isActionLoading}
-              >
-                {isActionLoading ? (
-                  <ActivityIndicator color="#050A18" size="small" />
-                ) : (
-                  <Text style={styles.cashOutText}>CASH OUT</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+             {/* Weekly Platform Subscription Dues Card */}
+             {subscriptionInfo && (
+               <View style={[
+                 styles.subsCard,
+                 subscriptionInfo.weeklyFeeStatus === 'OVERDUE' && styles.subsCardOverdue,
+                 subscriptionInfo.weeklyFeeStatus === 'DUE' && styles.subsCardDue
+               ]}>
+                 <View style={styles.subsHeaderRow}>
+                   <View style={styles.subsHeaderLeft}>
+                     <ShieldCheck size={20} color={subscriptionInfo.weeklyFeeStatus === 'PAID' ? '#10B981' : '#D4AF37'} />
+                     <Text style={styles.subsStatusTitle}>Weekly Admin Fee</Text>
+                   </View>
+                   <View style={[
+                     styles.subsBadge,
+                     subscriptionInfo.weeklyFeeStatus === 'PAID' && styles.subsBadgePaid,
+                     subscriptionInfo.weeklyFeeStatus === 'DUE' && styles.subsBadgeDue,
+                     subscriptionInfo.weeklyFeeStatus === 'OVERDUE' && styles.subsBadgeOverdue
+                   ]}>
+                     <Text style={[
+                       styles.subsBadgeText,
+                       subscriptionInfo.weeklyFeeStatus === 'PAID' && { color: '#10B981' },
+                       subscriptionInfo.weeklyFeeStatus === 'DUE' && { color: '#D4AF37' },
+                       subscriptionInfo.weeklyFeeStatus === 'OVERDUE' && { color: '#EF4444' }
+                     ]}>
+                       {subscriptionInfo.weeklyFeeStatus}
+                     </Text>
+                   </View>
+                 </View>
+                 
+                 <Text style={styles.subsDueDateText}>
+                   {subscriptionInfo.weeklyFeeStatus === 'PAID' 
+                     ? `Subscription Active until: ${new Date(subscriptionInfo.feeDueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                     : `Platform Fee Dues (₱50.00) are due by: ${new Date(subscriptionInfo.feeDueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                   }
+                 </Text>
+
+                 {subscriptionInfo.pendingTicket ? (
+                   <View style={styles.pendingTicketRow}>
+                     <ActivityIndicator size="small" color="#D4AF37" style={{ marginRight: 6 }} />
+                     <Text style={styles.pendingTicketText}>
+                       Ref: #{subscriptionInfo.pendingTicket.referenceCode} is pending Admin verification.
+                     </Text>
+                   </View>
+                 ) : (
+                   subscriptionInfo.weeklyFeeStatus !== 'PAID' && (
+                     <TouchableOpacity 
+                       style={styles.settleButton}
+                       activeOpacity={0.8}
+                       onPress={() => setIsSettleModalOpen(true)}
+                     >
+                       <Text style={styles.settleButtonText}>Settle ₱50.00 Admin Fee</Text>
+                     </TouchableOpacity>
+                   )
+                 )}
+               </View>
+             )}
+
+             {/* Cash Settlement Notice Card */}
+             <View style={styles.withdrawCard}>
+               <View style={styles.withdrawLeft}>
+                 <View style={styles.withdrawIconWrapper}>
+                   <TrendingUp size={22} color="#D4AF37" />
+                 </View>
+                 <View style={{ flex: 1 }}>
+                   <Text style={styles.withdrawTitle}>COD Settlement</Text>
+                   <Text style={[styles.withdrawDesc, { color: '#E5E7EB', fontSize: 11, lineHeight: 16, marginTop: 4 }]}>
+                     All delivery fees and errand totals are physically collected in cash directly from customers. No digital wallet cash-outs required.
+                   </Text>
+                 </View>
+               </View>
+             </View>
 
             {/* Recent Earnings List */}
             <View style={styles.recentSection}>
@@ -387,6 +429,100 @@ export default function RiderEarningsScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* Settle platform fee Modal */}
+      <Modal
+        visible={isSettleModalOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsSettleModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Settle Platform Fee</Text>
+              <Text style={styles.modalSubtitle}>
+                Remit exactly <Text style={{ fontWeight: '900', color: '#D4AF37' }}>₱50.00</Text> weekly fee to system administrator via GCash:
+              </Text>
+            </View>
+
+            {/* GCash Details */}
+            <View style={styles.qrCard}>
+              {/* Official QR Code or Fallback Simulated QR Code Visual */}
+              {systemSettings.gcashQrCode ? (
+                <Image 
+                  source={{ uri: systemSettings.gcashQrCode }} 
+                  style={styles.actualQrImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.simulatedQr}>
+                  <View style={styles.qrHeader}>
+                    <Text style={styles.qrHeaderText}>FETCHMEUP ADMIN</Text>
+                  </View>
+                  <View style={styles.qrPatternBox}>
+                    {/* Grid simulated pattern blocks */}
+                    <View style={[styles.qrBlock, { top: 12, left: 12 }]} />
+                    <View style={[styles.qrBlock, { top: 12, right: 12 }]} />
+                    <View style={[styles.qrBlock, { bottom: 12, left: 12 }]} />
+                    <View style={[styles.qrBlock, { bottom: 30, right: 30, width: 24, height: 24 }]} />
+                    <Text style={styles.qrLogo}>GCash</Text>
+                  </View>
+                  <Text style={styles.qrFooterText}>SCAN TO PAY</Text>
+                </View>
+              )}
+              
+              <Text style={styles.remitPhoneTitle}>GCash Mobile Remittance No.</Text>
+              <Text style={styles.remitPhone}>{systemSettings.gcashNumber}</Text>
+              <Text style={styles.remitDesc}>
+                Scan the QR code above OR manually transfer exactly ₱50.00 to the mobile number listed above using your personal GCash account.
+              </Text>
+            </View>
+
+            {/* Reference input group */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>GCash 13-Digit Reference Number</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="e.g. 5012345678901"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="numeric"
+                maxLength={13}
+                value={refCode}
+                onChangeText={setRefCode}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setIsSettleModalOpen(false);
+                  setRefCode('');
+                }}
+                disabled={isActionLoading}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.modalSubmitBtn, 
+                  (refCode.trim().length !== 13 || isActionLoading) && styles.modalSubmitBtnDisabled
+                ]}
+                onPress={handleSettleSubmit}
+                disabled={refCode.trim().length !== 13 || isActionLoading}
+              >
+                {isActionLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Submit Dues</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -688,5 +824,298 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#4B5563',
     fontWeight: '600',
+  },
+  subsCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  subsCardDue: {
+    borderColor: 'rgba(212, 175, 55, 0.5)',
+    backgroundColor: 'rgba(212, 175, 55, 0.02)',
+  },
+  subsCardOverdue: {
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    backgroundColor: 'rgba(239, 68, 68, 0.02)',
+  },
+  subsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  subsHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  subsStatusTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  subsBadge: {
+    borderRadius: 50,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 1,
+  },
+  subsBadgePaid: {
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  subsBadgeDue: {
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    borderColor: 'rgba(212, 175, 55, 0.25)',
+  },
+  subsBadgeOverdue: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  subsBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  subsDueDateText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  pendingTicketRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  pendingTicketText: {
+    fontSize: 11,
+    color: '#374151',
+    fontWeight: '600',
+  },
+  settleButton: {
+    backgroundColor: '#050A18',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.3)',
+    shadowColor: '#050A18',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  settleButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    gap: 16,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1F2937',
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  qrCard: {
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  simulatedQr: {
+    width: 140,
+    height: 140,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#050A18',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+  },
+  actualQrImage: {
+    width: 140,
+    height: 140,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#050A18',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 16,
+  },
+  qrHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#050A18',
+    paddingVertical: 3,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    alignItems: 'center',
+  },
+  qrHeaderText: {
+    color: '#D4AF37',
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  qrPatternBox: {
+    width: 110,
+    height: 110,
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  qrBlock: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    backgroundColor: '#050A18',
+    borderRadius: 3,
+  },
+  qrLogo: {
+    fontSize: 11,
+    fontWeight: '950',
+    color: '#0047AB',
+    fontStyle: 'italic',
+  },
+  qrFooterText: {
+    position: 'absolute',
+    bottom: 4,
+    fontSize: 7,
+    fontWeight: '950',
+    color: '#050A18',
+    letterSpacing: 1.5,
+  },
+  remitPhoneTitle: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  remitPhone: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0047AB',
+    marginTop: 4,
+    letterSpacing: 0.5,
+  },
+  remitDesc: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 14,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    fontWeight: '500',
+  },
+  inputGroup: {
+    gap: 8,
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#374151',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  textInput: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1F2937',
+    fontWeight: '600',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#374151',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  modalSubmitBtn: {
+    flex: 2,
+    backgroundColor: '#050A18',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.3)',
+  },
+  modalSubmitBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+    borderColor: '#9CA3AF',
+  },
+  modalSubmitText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 13,
   },
 });

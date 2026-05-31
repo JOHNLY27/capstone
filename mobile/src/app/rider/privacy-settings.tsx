@@ -150,7 +150,7 @@ export default function RiderPrivacySettingsScreen() {
   const handleDeleteAccount = () => {
     Alert.alert(
       "🚨 DANGER: Account Deletion",
-      "Are you absolutely sure you want to permanently delete your FetchMeUp Rider account? This will wipe all your trip history, profile credentials, document verification entries, and GCash simulated wallets. This cannot be undone.",
+      "Are you absolutely sure you want to permanently delete your FetchMeUp Rider account? This will wipe all your trip history, profile credentials, document verification entries, and collected earnings history. This cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {

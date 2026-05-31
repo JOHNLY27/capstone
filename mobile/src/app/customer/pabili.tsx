@@ -31,7 +31,7 @@ export default function PabiliServiceScreen() {
   const [deliveryLocation, setDeliveryLocation] = useState('');
   const [estimatedBudget, setEstimatedBudget] = useState('');
   
-  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'COD'>('WALLET');
+  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'COD'>('COD');
   const [isLoading, setIsLoading] = useState(false);
 
   const categories = [
@@ -289,41 +289,15 @@ export default function PabiliServiceScreen() {
           {/* Payment Method Selector */}
           <Text style={styles.sectionTitle}>Payment Method</Text>
           <View style={styles.paymentSelectorContainer}>
-            <TouchableOpacity
-              style={[
-                styles.paymentCard,
-                paymentMethod === 'WALLET' && styles.activePaymentCard
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setPaymentMethod('WALLET')}
-            >
+            <View style={[styles.paymentCard, styles.activePaymentCard, { flex: 1, paddingVertical: 14 }]}>
               <View style={styles.paymentHeader}>
-                <Wallet size={16} color={paymentMethod === 'WALLET' ? '#0047AB' : '#9CA3AF'} />
-                <Text style={[styles.paymentText, paymentMethod === 'WALLET' && styles.activePaymentText]}>
-                  Wallet
+                <DollarSign size={16} color="#D4AF37" />
+                <Text style={[styles.paymentText, styles.activePaymentText, { fontWeight: '800' }]}>
+                  Cash on Delivery (COD)
                 </Text>
               </View>
-              <Text style={styles.paymentSubtext}>
-                Bal: ₱{parseFloat(authStore.getUser()?.walletBalance || '0').toFixed(2)}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.paymentCard,
-                paymentMethod === 'COD' && styles.activePaymentCard
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setPaymentMethod('COD')}
-            >
-              <View style={styles.paymentHeader}>
-                <DollarSign size={16} color={paymentMethod === 'COD' ? '#D4AF37' : '#9CA3AF'} />
-                <Text style={[styles.paymentText, paymentMethod === 'COD' && styles.activePaymentText]}>
-                  Cash (COD)
-                </Text>
-              </View>
-              <Text style={styles.paymentSubtext}>Pay physically to rider</Text>
-            </TouchableOpacity>
+              <Text style={styles.paymentSubtext}>Prepare exact cash amount upon shopping arrival.</Text>
+            </View>
           </View>
 
           {/* Dispatch Button */}

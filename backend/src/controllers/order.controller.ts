@@ -133,6 +133,39 @@ export const acceptOrder = async (
       return;
     }
 
+    // Weekly Platform Fee Dues Validation Check
+    const rider = await prisma.user.findUnique({
+      where: { id: riderId }
+    });
+
+    if (rider) {
+      const currentSettings: any = rider.settings || {};
+      let weeklyFeeStatus = currentSettings.weeklyFeeStatus || 'PAID';
+      const feeDueDateStr = currentSettings.feeDueDate;
+      if (feeDueDateStr) {
+        const dueDate = new Date(feeDueDateStr);
+        if (dueDate < new Date()) {
+          weeklyFeeStatus = 'OVERDUE';
+          const updatedSettings = {
+            ...currentSettings,
+            weeklyFeeStatus: 'OVERDUE',
+          };
+          await prisma.user.update({
+            where: { id: riderId },
+            data: { settings: updatedSettings },
+          });
+        }
+      }
+
+      if (weeklyFeeStatus === 'OVERDUE') {
+        res.status(403).json({
+          success: false,
+          error: 'Your account is suspended due to outstanding ₱50.00 weekly platform dues. Please settle inside the Earnings tab.'
+        });
+        return;
+      }
+    }
+
     const order = await prisma.order.findUnique({
       where: { id: orderId },
     });
@@ -347,6 +380,10 @@ export const getCustomerOrders = async (
       where: { customerId },
       include: {
         rider: { select: { id: true, name: true, phone: true, avatar: true } },
+        chatMessages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
       },
       orderBy: { createdAt: 'desc' },
     });

@@ -19,6 +19,7 @@ import { ArrowLeft, Send, Bike, Phone, Image as ImageIcon, User, AlertCircle, Ma
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authStore } from '../../utils/auth-store';
+import { persistentStorage } from '../../utils/persistent-storage';
 import { API_URL } from '../../constants/api';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -90,6 +91,16 @@ export default function ChatScreen() {
       }, 200);
     }
   }, [messages.length]);
+
+  // Automatically mark rider messages as read when viewed
+  useEffect(() => {
+    if (messages.length > 0 && currentUser) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.senderId !== currentUser.id) {
+        persistentStorage.setItem(`@last_seen_rider_msg_id_${orderId}`, lastMsg.id).catch(() => {});
+      }
+    }
+  }, [messages, currentUser, orderId]);
 
   const sendMessage = async () => {
     if (!inputText.trim() || !orderId || !token) return;

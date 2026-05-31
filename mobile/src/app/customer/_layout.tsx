@@ -1,8 +1,79 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
-import { Home, Package, History, Wallet, User } from 'lucide-react-native';
+import { Home, Package, History, Wallet, User, MessageSquare } from 'lucide-react-native';
+import { authStore } from '../../utils/auth-store';
+import { persistentStorage } from '../../utils/persistent-storage';
+import { API_URL } from '../../constants/api';
 
 export default function CustomerTabsLayout() {
+  const [badgeCount, setBadgeCount] = useState<number>(0);
+
+  useEffect(() => {
+    const checkUnreadChats = async () => {
+      const token = authStore.getToken();
+      const user = authStore.getUser();
+      if (!token || !user) {
+        setBadgeCount(0);
+        return;
+      }
+
+      try {
+        // 1. Fetch active rider chats and calculate unread messages
+        const ordersRes = await fetch(`${API_URL}/api/orders/customer`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const ordersData = await ordersRes.json();
+        let unreadRider = 0;
+        if (ordersRes.ok && ordersData.success) {
+          const orders = ordersData.data.orders || [];
+          const activeOrders = orders.filter((o: any) => 
+            ['ACCEPTED', 'IN_TRANSIT'].includes(o.status) && o.riderId
+          );
+          
+          for (const order of activeOrders) {
+            const chatMsgs = order.chatMessages || [];
+            if (chatMsgs.length > 0) {
+              const lastMsg = chatMsgs[0]; // take: 1 yields last message as index 0
+              if (lastMsg.senderId !== user.id) {
+                const lastSeenId = await persistentStorage.getItem(`@last_seen_rider_msg_id_${order.id}`);
+                if (lastSeenId !== lastMsg.id) {
+                  unreadRider++;
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Fetch admin support messages
+        const supportRes = await fetch(`${API_URL}/api/support/messages`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const supportData = await supportRes.json();
+        let unreadAdmin = 0;
+        if (supportRes.ok && supportData.success) {
+          const msgs = supportData.messages || [];
+          if (msgs.length > 0) {
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg.senderId !== user.id) {
+              const lastSeenId = await persistentStorage.getItem('@last_seen_admin_msg_id');
+              if (lastSeenId !== lastMsg.id) {
+                unreadAdmin = 1;
+              }
+            }
+          }
+        }
+
+        setBadgeCount(unreadRider + unreadAdmin);
+      } catch (e) {
+        console.error('Error calculating chat badges:', e);
+      }
+    };
+
+    checkUnreadChats();
+    const interval = setInterval(checkUnreadChats, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <Tabs screenOptions={{ 
       headerShown: false, 
@@ -44,19 +115,18 @@ export default function CustomerTabsLayout() {
         }} 
       />
       <Tabs.Screen 
-        name="wallet" 
+        name="support-chat" 
         options={{ 
-          title: 'Wallet', 
-          tabBarIcon: ({ color }) => <Wallet size={22} color={color} /> 
+          title: 'Live Chat', 
+          tabBarIcon: ({ color }) => <MessageSquare size={22} color={color} />,
+          tabBarBadge: badgeCount > 0 ? badgeCount : undefined
         }} 
       />
-      <Tabs.Screen 
-        name="profile" 
-        options={{ 
-          title: 'Profile', 
-          tabBarIcon: ({ color }) => <User size={22} color={color} /> 
-        }} 
-      />
+      <Tabs.Screen name="wallet" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="profile" options={{ 
+        title: 'Profile', 
+        tabBarIcon: ({ color }) => <User size={22} color={color} /> 
+      }} />
       <Tabs.Screen name="pabili" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="pasugo" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="pakuha" options={{ href: null, tabBarStyle: { display: 'none' } }} />
@@ -69,7 +139,6 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen name="privacy-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="favorite-riders" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="help" options={{ href: null, tabBarStyle: { display: 'none' } }} />
-      <Tabs.Screen name="support-chat" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   );
 }

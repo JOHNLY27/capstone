@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -14,10 +14,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Mail, Lock, Eye, EyeOff, ArrowLeft } from 'lucide-react-native';
+import { Mail, Lock, Eye, EyeOff, ArrowLeft, Check } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { API_URL } from '../constants/api';
 import { authStore } from '../utils/auth-store';
+import { persistentStorage } from '../utils/persistent-storage';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -25,7 +26,32 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userType, setUserType] = useState<'customer' | 'rider'>('customer');
+  const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  const loadSavedCredentials = async (type: 'customer' | 'rider') => {
+    try {
+      const savedEmail = await persistentStorage.getItem(`@remember_email_${type}`);
+      const savedPassword = await persistentStorage.getItem(`@remember_password_${type}`);
+      const savedRemember = await persistentStorage.getItem(`@remember_flag_${type}`);
+
+      if (savedRemember === 'true' && savedEmail && savedPassword) {
+        setEmail(savedEmail);
+        setPassword(savedPassword);
+        setRememberMe(true);
+      } else {
+        setEmail('');
+        setPassword('');
+        setRememberMe(false);
+      }
+    } catch (err) {
+      console.error('Error loading remembered credentials:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadSavedCredentials(userType);
+  }, [userType]);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -51,6 +77,21 @@ export default function LoginScreen() {
 
       if (!response.ok) {
         throw new Error(resData.error || 'Authentication failed. Please check your credentials.');
+      }
+
+      // Persist credentials locally if "Remember Me" is enabled
+      try {
+        if (rememberMe) {
+          await persistentStorage.setItem(`@remember_email_${userType}`, email.trim());
+          await persistentStorage.setItem(`@remember_password_${userType}`, password);
+          await persistentStorage.setItem(`@remember_flag_${userType}`, 'true');
+        } else {
+          await persistentStorage.removeItem(`@remember_email_${userType}`);
+          await persistentStorage.removeItem(`@remember_password_${userType}`);
+          await persistentStorage.removeItem(`@remember_flag_${userType}`);
+        }
+      } catch (storageErr) {
+        console.error('Storage persistence error:', storageErr);
       }
 
       // Save token and user details to memory store
@@ -186,6 +227,21 @@ export default function LoginScreen() {
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Remember Me Checkbox */}
+            <TouchableOpacity 
+              style={styles.rememberMeContainer}
+              activeOpacity={0.8}
+              onPress={() => setRememberMe(!rememberMe)}
+            >
+              <View style={[
+                styles.checkbox,
+                rememberMe && { backgroundColor: primaryColor, borderColor: primaryColor }
+              ]}>
+                {rememberMe && <Check size={14} color="#FFFFFF" strokeWidth={3} />}
+              </View>
+              <Text style={styles.rememberMeText}>Remember Me</Text>
+            </TouchableOpacity>
 
             {/* Submit Button */}
             <TouchableOpacity
@@ -370,6 +426,30 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 16,
     letterSpacing: 2,
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    marginBottom: 4,
+    paddingVertical: 4,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  rememberMeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4B5563',
   },
   footer: {
     marginTop: 24,

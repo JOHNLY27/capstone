@@ -9,6 +9,9 @@ import {
   updateSettings,
   changePassword,
   deleteAccount,
+  getWeeklyFeeStatus,
+  settleWeeklyFee,
+  getSystemSettings,
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 
@@ -26,5 +29,8 @@ router.get('/settings', authenticate, getSettings);
 router.put('/settings', authenticate, updateSettings);
 router.post('/change-password', authenticate, changePassword);
 router.delete('/delete-account', authenticate, deleteAccount);
+router.get('/weekly-fee-status', authenticate, getWeeklyFeeStatus);
+router.post('/settle-weekly-fee', authenticate, settleWeeklyFee);
+router.get('/system-settings', authenticate, getSystemSettings);
 
 export { router as authRouter };

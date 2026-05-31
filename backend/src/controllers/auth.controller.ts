@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 
@@ -399,6 +401,164 @@ export const deleteAccount = async (
       where: { id: req.user?.id },
     });
     res.status(200).json({ success: true, message: 'Account deleted permanently.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getWeeklyFeeStatus = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const riderId = req.user?.id;
+    const user = await prisma.user.findUnique({
+      where: { id: riderId },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, error: 'Rider not found.' });
+      return;
+    }
+
+    const currentSettings: any = user.settings || {};
+    let weeklyFeeStatus = currentSettings.weeklyFeeStatus || 'PAID';
+    let feeDueDate = currentSettings.feeDueDate;
+
+    // If no due date exists, initialize it to 7 days from registration (free trial)
+    if (!feeDueDate) {
+      const regDate = new Date(user.createdAt);
+      const initialDueDate = new Date(regDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+      feeDueDate = initialDueDate.toISOString();
+      
+      const updatedSettings = {
+        ...currentSettings,
+        weeklyFeeStatus: 'PAID',
+        feeDueDate,
+      };
+
+      await prisma.user.update({
+        where: { id: riderId },
+        data: { settings: updatedSettings },
+      });
+      
+      currentSettings.weeklyFeeStatus = 'PAID';
+      currentSettings.feeDueDate = feeDueDate;
+    }
+
+    // Auto check if overdue dynamically
+    const dueDate = new Date(feeDueDate);
+    if (dueDate < new Date() && weeklyFeeStatus === 'PAID') {
+      weeklyFeeStatus = 'OVERDUE';
+      const updatedSettings = {
+        ...currentSettings,
+        weeklyFeeStatus: 'OVERDUE',
+      };
+      await prisma.user.update({
+        where: { id: riderId },
+        data: { settings: updatedSettings },
+      });
+    }
+
+    // Find any pending settlement transaction
+    const pendingTicket = await prisma.walletTransaction.findFirst({
+      where: {
+        userId: riderId,
+        status: 'PENDING',
+        description: { startsWith: 'Rider Weekly Platform Fee' },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.status(200).json({
+      success: true,
+      weeklyFeeStatus,
+      feeDueDate,
+      pendingTicket,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const settleWeeklyFee = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const riderId = req.user?.id;
+    const { referenceCode } = req.body;
+
+    if (!referenceCode || referenceCode.trim().length !== 13 || isNaN(Number(referenceCode))) {
+      res.status(400).json({ success: false, error: 'Please enter a valid 13-digit GCash Reference Number.' });
+      return;
+    }
+
+    // Uniqueness check
+    const existing = await prisma.walletTransaction.findUnique({
+      where: { referenceCode },
+    });
+
+    if (existing) {
+      res.status(400).json({ success: false, error: 'This GCash reference code has already been submitted.' });
+      return;
+    }
+
+    const txRecord = await prisma.walletTransaction.create({
+      data: {
+        userId: riderId,
+        type: 'DEBIT',
+        amount: 50.00,
+        status: 'PENDING',
+        referenceCode,
+        description: 'Rider Weekly Platform Fee Dues (Pending Approval)',
+      },
+    });
+
+    // Update settings status to reflect that a settlement is pending
+    const user = await prisma.user.findUnique({ where: { id: riderId } });
+    if (user) {
+      const currentSettings: any = user.settings || {};
+      const updatedSettings = {
+        ...currentSettings,
+        weeklyFeeStatus: 'DUE', // placed in audit grace
+      };
+      await prisma.user.update({
+        where: { id: riderId },
+        data: { settings: updatedSettings },
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Settlement reference submitted successfully for Admin review.',
+      transaction: txRecord,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getSystemSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const settingsFile = path.join(process.cwd(), 'system-settings.json');
+    let settings = { gcashNumber: '0912-345-6789', gcashQrCode: '' };
+    
+    if (fs.existsSync(settingsFile)) {
+      const fileData = fs.readFileSync(settingsFile, 'utf8');
+      settings = JSON.parse(fileData);
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: settings,
+    });
   } catch (err) {
     next(err);
   }

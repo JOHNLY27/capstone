@@ -26,8 +26,8 @@ export default function NotificationsScreen() {
     },
     {
       id: '2',
-      title: 'Payment Successful',
-      body: 'Successfully loaded ₱500 to your Fetch Me Up Wallet.',
+      title: 'Errand Completed',
+      body: 'Your pabili errand was successfully completed via Cash on Delivery.',
       time: '1 day ago',
       type: 'success',
     },

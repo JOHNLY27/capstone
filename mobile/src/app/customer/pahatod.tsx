@@ -29,7 +29,7 @@ export default function PahatodServiceScreen() {
   const [pickup, setPickup] = useState('');
   const [dropoff, setDropoff] = useState('');
 
-  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'COD'>('WALLET');
+  const [paymentMethod, setPaymentMethod] = useState<'WALLET' | 'COD'>('COD');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleDispatch = async () => {
@@ -143,9 +143,8 @@ export default function PahatodServiceScreen() {
             </View>
           </View>
 
-          {/* Locations */}
-          <Text style={styles.sectionTitle}>Drop-off & Delivery Locations</Text>
-          <View style={styles.locationContainer}>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>PICKUP LOCATION</Text>
             <View style={styles.locationField}>
               <MapPin size={18} color="#0047AB" style={styles.fieldIcon} />
               <TextInput
@@ -156,7 +155,10 @@ export default function PahatodServiceScreen() {
                 onChangeText={setPickup}
               />
             </View>
+          </View>
 
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>DROP-OFF LOCATION</Text>
             <View style={styles.locationField}>
               <MapPin size={18} color="#D4AF37" style={styles.fieldIcon} />
               <TextInput
@@ -169,47 +171,19 @@ export default function PahatodServiceScreen() {
             </View>
           </View>
 
-          {/* Payment Method Selector */}
           <Text style={styles.sectionTitle}>Payment Method</Text>
           <View style={styles.paymentSelectorContainer}>
-            <TouchableOpacity
-              style={[
-                styles.paymentCard,
-                paymentMethod === 'WALLET' && styles.activePaymentCard
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setPaymentMethod('WALLET')}
-            >
+            <View style={[styles.paymentCard, styles.activePaymentCard, { flex: 1, paddingVertical: 14 }]}>
               <View style={styles.paymentHeader}>
-                <Wallet size={16} color={paymentMethod === 'WALLET' ? '#0047AB' : '#9CA3AF'} />
-                <Text style={[styles.paymentText, paymentMethod === 'WALLET' && styles.activePaymentText]}>
-                  Wallet
+                <DollarSign size={16} color="#D4AF37" />
+                <Text style={[styles.paymentText, styles.activePaymentText, { fontWeight: '800' }]}>
+                  Cash on Delivery (COD)
                 </Text>
               </View>
-              <Text style={styles.paymentSubtext}>
-                Bal: ₱{parseFloat(authStore.getUser()?.walletBalance || '0').toFixed(2)}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.paymentCard,
-                paymentMethod === 'COD' && styles.activePaymentCard
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setPaymentMethod('COD')}
-            >
-              <View style={styles.paymentHeader}>
-                <DollarSign size={16} color={paymentMethod === 'COD' ? '#D4AF37' : '#9CA3AF'} />
-                <Text style={[styles.paymentText, paymentMethod === 'COD' && styles.activePaymentText]}>
-                  Cash (COD)
-                </Text>
-              </View>
-              <Text style={styles.paymentSubtext}>Pay physically to rider</Text>
-            </TouchableOpacity>
+              <Text style={styles.paymentSubtext}>Prepare exact cash amount upon package arrival.</Text>
+            </View>
           </View>
 
-          {/* Dispatch */}
           <TouchableOpacity 
             style={styles.dispatchButton}
             activeOpacity={0.9}
@@ -410,5 +384,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#4B5563',
     lineHeight: 18,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#9CA3AF',
+    letterSpacing: 1,
+    marginBottom: 8,
   },
 });
