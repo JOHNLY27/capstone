@@ -1025,7 +1025,7 @@ const styles = StyleSheet.create({
   },
   qrLogo: {
     fontSize: 11,
-    fontWeight: '950',
+    fontWeight: '900',
     color: '#0047AB',
     fontStyle: 'italic',
   },
@@ -1033,7 +1033,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     fontSize: 7,
-    fontWeight: '950',
+    fontWeight: '900',
     color: '#050A18',
     letterSpacing: 1.5,
   },

@@ -108,67 +108,72 @@ export default function AddressesScreen() {
   };
 
   const handleOptionsPress = (addr: any) => {
+    const buttons: any[] = [];
+
+    if (!addr.isDefault) {
+      buttons.push({
+        text: "Set as Default",
+        onPress: async () => {
+          const token = authStore.getToken();
+          try {
+            const response = await fetch(`${API_URL}/api/addresses/${addr.id}/default`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+              Alert.alert('Success', 'Default address updated.');
+              fetchAddresses();
+            } else {
+              Alert.alert('Error', 'Failed to update default address.');
+            }
+          } catch (e) {
+            Alert.alert('Error', 'Connection failed.');
+          }
+        }
+      });
+    }
+
+    buttons.push({
+      text: "Delete Address",
+      style: "destructive",
+      onPress: async () => {
+        Alert.alert(
+          "Delete Confirmation",
+          `Are you sure you want to permanently delete "${addr.label}"?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete",
+              style: "destructive",
+              onPress: async () => {
+                const token = authStore.getToken();
+                try {
+                  const response = await fetch(`${API_URL}/api/addresses/${addr.id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                  });
+                  if (response.ok) {
+                    Alert.alert('Deleted', 'Address removed successfully.');
+                    fetchAddresses();
+                  } else {
+                    Alert.alert('Error', 'Failed to delete address.');
+                  }
+                } catch (e) {
+                  Alert.alert('Error', 'Connection failed.');
+                }
+              }
+            }
+          ]
+        );
+      }
+    });
+
+    buttons.push({ text: "Cancel", style: "cancel" });
+
     Alert.alert(
       "Address Options",
       `Manage your location: "${addr.label}"`,
-      [
-        {
-          text: "Set as Default",
-          disabled: addr.isDefault,
-          onPress: async () => {
-            const token = authStore.getToken();
-            try {
-              const response = await fetch(`${API_URL}/api/addresses/${addr.id}/default`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
-              if (response.ok) {
-                Alert.alert('Success', 'Default address updated.');
-                fetchAddresses();
-              } else {
-                Alert.alert('Error', 'Failed to update default address.');
-              }
-            } catch (e) {
-              Alert.alert('Error', 'Connection failed.');
-            }
-          }
-        },
-        {
-          text: "Delete Address",
-          style: "destructive",
-          onPress: async () => {
-            Alert.alert(
-              "Delete Confirmation",
-              `Are you sure you want to permanently delete "${addr.label}"?`,
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: async () => {
-                    const token = authStore.getToken();
-                    try {
-                      const response = await fetch(`${API_URL}/api/addresses/${addr.id}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': `Bearer ${token}` }
-                      });
-                      if (response.ok) {
-                        Alert.alert('Deleted', 'Address removed successfully.');
-                        fetchAddresses();
-                      } else {
-                        Alert.alert('Error', 'Failed to delete address.');
-                      }
-                    } catch (e) {
-                      Alert.alert('Error', 'Connection failed.');
-                    }
-                  }
-                }
-              ]
-            );
-          }
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
+      buttons
     );
   };
 

@@ -15,8 +15,11 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, Phone, MessageSquare, MapPin, Navigation, CheckCircle, Package, Info, AlertTriangle } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { authStore } from '../../utils/auth-store';
 import { API_URL } from '../../constants/api';
+import { getSocket } from '../../utils/socket';
+import LiveTrackingMap from '../../components/LiveTrackingMap';
 
 const { width } = Dimensions.get('window');
 
@@ -30,6 +33,27 @@ export default function RiderActiveDeliveryScreen() {
   const [status, setStatus] = useState<'assigned' | 'picked_up' | 'completed'>('assigned');
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [riderCoords, setRiderCoords] = useState<{ latitude: number; longitude: number; bearing?: number } | null>(null);
+
+  // Get initial location for map centering before watcher starts
+  useEffect(() => {
+    const getInitialRiderLoc = async () => {
+      try {
+        const { status: permissionStatus } = await Location.requestForegroundPermissionsAsync();
+        if (permissionStatus === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          setRiderCoords({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            bearing: loc.coords.heading || 0
+          });
+        }
+      } catch (err) {
+        console.error('Failed to get initial rider location for map:', err);
+      }
+    };
+    getInitialRiderLoc();
+  }, []);
 
   const fetchActiveOrderDetails = async () => {
     if (!orderId) {
@@ -70,6 +94,72 @@ export default function RiderActiveDeliveryScreen() {
     fetchActiveOrderDetails();
   }, [orderId]);
 
+  // Start location tracking when rider accepted or in transit
+  useEffect(() => {
+    if (!orderId || !order || (order.status !== 'ACCEPTED' && order.status !== 'IN_TRANSIT')) {
+      return;
+    }
+
+    let isMounted = true;
+    let locationSubscription: any = null;
+
+    const startTracking = async () => {
+      try {
+        const { status: permissionStatus } = await Location.requestForegroundPermissionsAsync();
+        if (permissionStatus !== 'granted') {
+          console.warn('Foreground location permission not granted for rider tracking');
+          return;
+        }
+
+        const socket = getSocket();
+        socket.emit('join_order_channel', { orderId });
+        console.log(`📡 [RiderTracking] Joined order channel for ${orderId}`);
+
+        // watchPositionAsync triggers callback on movement
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 5000, // Every 5 seconds
+            distanceInterval: 10, // Or every 10 meters
+          },
+          (loc) => {
+            if (!isMounted) return;
+            const { latitude, longitude, heading } = loc.coords;
+
+            // Update local coordinates state
+            setRiderCoords({
+              latitude,
+              longitude,
+              bearing: heading || 0
+            });
+
+            // Emit coordinate updates to Socket.io
+            socket.emit('update_rider_location', {
+              orderId,
+              riderId: order.riderId || authStore.getUser()?.id,
+              latitude,
+              longitude,
+              bearing: heading || 0
+            });
+            console.log(`📡 [RiderTracking] Sent coordinates: ${latitude}, ${longitude}`);
+          }
+        );
+      } catch (err) {
+        console.error('Error starting location watcher for rider:', err);
+      }
+    };
+
+    startTracking();
+
+    return () => {
+      isMounted = false;
+      if (locationSubscription) {
+        locationSubscription.remove();
+        console.log('📡 [RiderTracking] Location subscription removed');
+      }
+    };
+  }, [orderId, order?.status]);
+
   const handleUpdateStatus = async (nextServerStatus: 'IN_TRANSIT' | 'COMPLETED') => {
     setIsActionLoading(true);
     try {
@@ -107,7 +197,7 @@ export default function RiderActiveDeliveryScreen() {
             ? 'Cash on Delivery physically collected from customer. Wallet ledger logs have been generated.'
             : 'Delivery successfully settled! Balance has been credited to your digital wallet.',
           [
-            { text: 'Back to Dashboard', onPress: () => router.push('/rider/') }
+            { text: 'Back to Dashboard', onPress: () => router.push('/rider') }
           ]
         );
       }
@@ -176,7 +266,7 @@ export default function RiderActiveDeliveryScreen() {
         <Package size={48} color="#9CA3AF" />
         <Text style={styles.errorTitle}>Active Order Not Found</Text>
         <Text style={styles.errorDesc}>This operation may have been finished or reassigned.</Text>
-        <TouchableOpacity style={styles.errorButton} onPress={() => router.push('/rider/')}>
+        <TouchableOpacity style={styles.errorButton} onPress={() => router.push('/rider')}>
           <Text style={styles.errorButtonText}>Go to Dashboard</Text>
         </TouchableOpacity>
       </View>
@@ -227,49 +317,44 @@ export default function RiderActiveDeliveryScreen() {
         </View>
       </View>
 
-      {/* Mock Map Navigation Section */}
+      {/* Live Map Navigation Section */}
       <View style={styles.mapContainer}>
-        {/* Premium Graphic Representation of a Map */}
-        <View style={styles.mockMapBackground}>
-          <View style={styles.gridLineHorizontal1} />
-          <View style={styles.gridLineHorizontal2} />
-          <View style={styles.gridLineVertical1} />
-          <View style={styles.gridLineVertical2} />
-          
-          {/* Path Line */}
-          <View style={styles.mapRoutePath} />
-          
-          {/* Pickup Marker */}
-          <View style={[styles.mapMarker, styles.pickupMarker]}>
-            <View style={styles.markerPulse} />
-            <MapPin size={18} color="#0047AB" />
-            <View style={styles.markerLabelWrapper}>
-              <Text style={styles.markerLabel} numberOfLines={1}>
-                {order.pickupAddress.split(',')[0]}
-              </Text>
-            </View>
+        {order && order.pickupCoords && order.dropoffCoords ? (
+          <LiveTrackingMap
+            pickupCoords={
+              typeof order.pickupCoords === 'string'
+                ? JSON.parse(order.pickupCoords)
+                : order.pickupCoords
+            }
+            dropoffCoords={
+              typeof order.dropoffCoords === 'string'
+                ? JSON.parse(order.dropoffCoords)
+                : order.dropoffCoords
+            }
+            riderCoords={riderCoords}
+          />
+        ) : (
+          <View style={styles.mockMapBackground}>
+            <View style={styles.gridLineHorizontal1} />
+            <View style={styles.gridLineHorizontal2} />
+            <View style={styles.gridLineVertical1} />
+            <View style={styles.gridLineVertical2} />
+            <Text style={{ position: 'absolute', alignSelf: 'center', top: '45%', color: '#9CA3AF' }}>
+              Map initialization...
+            </Text>
           </View>
-
-          {/* Delivery Marker */}
-          <View style={[styles.mapMarker, styles.deliveryMarker]}>
-            <View style={styles.markerPulseGold} />
-            <MapPin size={18} color="#D4AF37" />
-            <View style={styles.markerLabelWrapper}>
-              <Text style={styles.markerLabel} numberOfLines={1}>
-                {order.dropoffAddress.split(',')[0]}
-              </Text>
-            </View>
-          </View>
-        </View>
+        )}
         
         {/* Status indicator on Map */}
-        <View style={styles.mapStatusBadge}>
-          <Text style={styles.mapStatusText}>
-            {status === 'assigned' 
-              ? `ROUTE TO STORE / PICKUP POINT (${order.estimatedDistance.toFixed(1)} km)` 
-              : `ROUTE TO CUSTOMER DESTINATION (${(order.estimatedDistance * 0.8).toFixed(1)} km)`}
-          </Text>
-        </View>
+        {order && (
+          <View style={styles.mapStatusBadge}>
+            <Text style={styles.mapStatusText}>
+              {status === 'assigned' 
+                ? `ROUTE TO STORE / PICKUP POINT (${order.estimatedDistance.toFixed(1)} km)` 
+                : `ROUTE TO CUSTOMER DESTINATION (${(order.estimatedDistance * 0.8).toFixed(1)} km)`}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Details Scroll Section */}

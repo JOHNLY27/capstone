@@ -49,6 +49,7 @@ import { RiderApprovalsPage } from "./pages/admin/RiderApprovalsPage";
 import { UserManagementPage } from "./pages/admin/UserManagementPage";
 import { WithdrawalApprovalsPage } from "./pages/admin/WithdrawalApprovalsPage";
 import SupportChatsPage from "./pages/admin/SupportChatsPage";
+import { SystemSettingsPage } from "./pages/admin/SystemSettingsPage";
 
 export const router = createBrowserRouter([
   {
@@ -127,6 +128,7 @@ export const router = createBrowserRouter([
       { path: "users", Component: UserManagementPage },
       { path: "withdrawals", Component: WithdrawalApprovalsPage },
       { path: "support", Component: SupportChatsPage },
+      { path: "settings", Component: SystemSettingsPage },
     ],
   },
 ]);

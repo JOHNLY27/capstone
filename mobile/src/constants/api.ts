@@ -9,4 +9,4 @@
  * - Change this to your computer's local Wi-Fi IP address (e.g. 'http://192.168.1.15:5000').
  * - Ensure both your phone and computer are connected to the EXACT same Wi-Fi network.
  */
-export const API_URL = 'http://192.168.1.10:5000';
+export const API_URL = 'http://192.168.1.11:5000';

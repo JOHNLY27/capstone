@@ -7,17 +7,37 @@ export interface UserProfile {
   walletBalance: string;
   avatar?: string;
   rating: number;
+  ratingsCount?: number;
   isVerified: boolean;
 }
 
 class AuthStore {
   private token: string | null = null;
   private user: UserProfile | null = null;
+  private listeners: (() => void)[] = [];
+
+  subscribe(listener: () => void) {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  private notify() {
+    this.listeners.forEach((l) => {
+      try {
+        l();
+      } catch (err) {
+        console.error('Error in AuthStore subscriber:', err);
+      }
+    });
+  }
 
   setSession(token: string, user: UserProfile) {
     this.token = token;
     this.user = user;
     console.log(`🔑 [AuthStore] Session successfully started for user: ${user.name} (${user.role})`);
+    this.notify();
   }
 
   getToken(): string | null {
@@ -32,6 +52,7 @@ class AuthStore {
     if (this.user) {
       this.user = { ...this.user, ...updatedUser };
       console.log(`👤 [AuthStore] User profile updated locally.`);
+      this.notify();
     }
   }
 
@@ -39,6 +60,7 @@ class AuthStore {
     this.token = null;
     this.user = null;
     console.log('🔑 [AuthStore] Session cleared/logged out.');
+    this.notify();
   }
 
   isAuthenticated(): boolean {

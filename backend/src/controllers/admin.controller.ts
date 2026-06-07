@@ -17,13 +17,13 @@ export const getDashboardStats = async (
       where: { type: 'DEBIT', status: 'PENDING' }
     });
     const totalOrders = await prisma.order.count();
-    
+
     // Calculate total transactions volume
     const completedOrders = await prisma.order.findMany({
       where: { status: 'COMPLETED' },
       select: { price: true, deliveryFee: true },
     });
-    
+
     const totalVolume = completedOrders.reduce((acc, order) => {
       return acc + Number(order.price) + Number(order.deliveryFee);
     }, 0);
@@ -53,7 +53,7 @@ export const getUsers = async (
 ): Promise<void> => {
   try {
     const roleQuery = req.query.role as string;
-    
+
     let whereClause = {};
     if (roleQuery === 'CUSTOMER' || roleQuery === 'RIDER' || roleQuery === 'ADMIN') {
       whereClause = { role: roleQuery };
@@ -272,7 +272,7 @@ export const verifyWithdrawal = async (
         // Refund digital wallet balance ONLY for traditional wallet withdrawals (not platform dues)
         if (!txRecord.description.startsWith('Rider Weekly Platform Fee')) {
           const amount = Number(txRecord.amount);
-          
+
           await tx.user.update({
             where: { id: txRecord.userId },
             data: {
@@ -320,25 +320,38 @@ export const updateSystemSettings = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { gcashNumber, gcashQrCode } = req.body;
+    const { gcashNumber, gcashQrCode, fares } = req.body;
 
-    if (!gcashNumber) {
-      res.status(400).json({ success: false, error: 'GCash Mobile Number is required.' });
+    const settingsFile = path.join(process.cwd(), 'system-settings.json');
+    let existingSettings: any = {};
+    if (fs.existsSync(settingsFile)) {
+      try {
+        const fileData = fs.readFileSync(settingsFile, 'utf8');
+        existingSettings = JSON.parse(fileData);
+      } catch (e) {
+        console.error('Error parsing settings file:', e);
+      }
+    }
+
+    const mergedSettings = {
+      ...existingSettings,
+      ...(gcashNumber !== undefined ? { gcashNumber: gcashNumber.trim() } : {}),
+      ...(gcashQrCode !== undefined ? { gcashQrCode: gcashQrCode || '' } : {}),
+      ...(fares !== undefined ? { fares } : {}),
+    };
+
+    // Validation check: Make sure we got at least something valid
+    if (gcashNumber === undefined && fares === undefined && gcashQrCode === undefined) {
+      res.status(400).json({ success: false, error: 'No settings parameters provided.' });
       return;
     }
 
-    const settingsFile = path.join(process.cwd(), 'system-settings.json');
-    const newSettings = {
-      gcashNumber: gcashNumber.trim(),
-      gcashQrCode: gcashQrCode || '',
-    };
-
-    fs.writeFileSync(settingsFile, JSON.stringify(newSettings, null, 2), 'utf8');
+    fs.writeFileSync(settingsFile, JSON.stringify(mergedSettings, null, 2), 'utf8');
 
     res.status(200).json({
       success: true,
-      message: 'GCash platform settings updated successfully.',
-      data: newSettings,
+      message: 'System configuration settings updated successfully.',
+      data: mergedSettings,
     });
   } catch (err) {
     next(err);

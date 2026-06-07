@@ -9,6 +9,7 @@ import {
   getOrderDetails,
   sendChatMessage,
   rateOrderRider,
+  cancelOrder,
 } from '../controllers/order.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 
@@ -25,6 +26,7 @@ router.get('/customer', getCustomerOrders);
 router.get('/rider', getRiderOrders);
 router.post('/:id/chat', sendChatMessage);
 router.post('/:id/rate', rateOrderRider);
+router.post('/:id/cancel', cancelOrder);
 router.get('/:id', getOrderDetails);
 
 export { router as orderRouter };

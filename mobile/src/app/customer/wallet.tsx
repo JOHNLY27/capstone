@@ -109,7 +109,7 @@ export default function CustomerWalletScreen() {
         },
         {
           text: 'Load Funds',
-          onPress: async (amountStr) => {
+          onPress: async (amountStr?: string) => {
             const amount = parseFloat(amountStr || '0');
             if (isNaN(amount) || amount <= 0) {
               Alert.alert('Invalid Amount', 'Please enter a valid amount greater than 0.');

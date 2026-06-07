@@ -22,6 +22,7 @@ import { authStore } from '../../utils/auth-store';
 import { persistentStorage } from '../../utils/persistent-storage';
 import { API_URL } from '../../constants/api';
 import * as ImagePicker from 'expo-image-picker';
+import { getSocket } from '../../utils/socket';
 
 const { width } = Dimensions.get('window');
 
@@ -75,14 +76,33 @@ export default function ChatScreen() {
 
   useEffect(() => {
     fetchChatDetails(true);
-
-    // Poll every 3 seconds for real-time messages
-    const interval = setInterval(() => {
-      fetchChatDetails(false);
-    }, 3000);
-
-    return () => clearInterval(interval);
   }, [orderId]);
+
+  // Connect to Socket.io and listen for chat messages
+  useEffect(() => {
+    if (!orderId || !token) return;
+
+    const socket = getSocket();
+    socket.emit('join_order_channel', { orderId });
+    console.log(`🔌 [ChatScreen] Joined order room order_${orderId}`);
+
+    const handleMessageReceived = (msg: ChatMessage) => {
+      console.log('🔌 [ChatScreen] Real-time message received:', msg);
+      if (msg.senderId !== currentUser?.id) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+      }
+    };
+
+    socket.on('chat_message_received', handleMessageReceived);
+
+    return () => {
+      socket.off('chat_message_received', handleMessageReceived);
+      console.log('🔌 [ChatScreen] Disconnected chat channel listener');
+    };
+  }, [orderId, token, currentUser?.id]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -103,7 +123,7 @@ export default function ChatScreen() {
   }, [messages, currentUser, orderId]);
 
   const sendMessage = async () => {
-    if (!inputText.trim() || !orderId || !token) return;
+    if (!inputText.trim() || !orderId || !token || !currentUser) return;
 
     if (!order?.riderId) {
       Alert.alert("Notice", "Cannot send message. No rider is assigned to this order yet.");
@@ -160,7 +180,7 @@ export default function ChatScreen() {
   };
 
   const sendImageMessage = async (base64Data: string) => {
-    if (!orderId || !token) return;
+    if (!orderId || !token || !currentUser) return;
 
     setIsSending(true);
     const receiverId = currentUser.id === order.customerId ? order.riderId : order.customerId;
@@ -209,7 +229,7 @@ export default function ChatScreen() {
   };
 
   const sendLocationMessage = async (lat: number, lng: number, label: string) => {
-    if (!orderId || !token) return;
+    if (!orderId || !token || !currentUser) return;
     setIsSending(true);
 
     const content = `LOCATION:${lat},${lng},${label}`;

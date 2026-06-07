@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
+import { sendPushNotification } from '../services/notification.service.js';
 
 const signToken = (id: string, role: string): string => {
   const secret = process.env.JWT_SECRET || 'supabase-capstone-secret-jwt-key-2026';
@@ -191,6 +192,14 @@ export const login = async (
 
     const isPasswordCorrect = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordCorrect) {
+      // Trigger a failed login security alert push notification asynchronously
+      sendPushNotification(
+        user.id,
+        '⚠️ Security Alert',
+        'A failed login attempt was detected on your account.',
+        { type: 'failed_login' }
+      ).catch(err => console.error('Failed to send login alert push notification:', err));
+
       res.status(401).json({
         success: false,
         error: 'Incorrect password.',
@@ -312,7 +321,7 @@ export const getSettings = async (
       where: { id: req.user?.id },
       select: { settings: true },
     });
-    
+
     res.status(200).json({
       success: true,
       settings: user?.settings || {
@@ -340,7 +349,7 @@ export const updateSettings = async (
       where: { id: req.user?.id },
       data: { settings },
     });
-    
+
     res.status(200).json({
       success: true,
       settings: updatedUser.settings,
@@ -431,7 +440,7 @@ export const getWeeklyFeeStatus = async (
       const regDate = new Date(user.createdAt);
       const initialDueDate = new Date(regDate.getTime() + 7 * 24 * 60 * 60 * 1000);
       feeDueDate = initialDueDate.toISOString();
-      
+
       const updatedSettings = {
         ...currentSettings,
         weeklyFeeStatus: 'PAID',
@@ -442,7 +451,7 @@ export const getWeeklyFeeStatus = async (
         where: { id: riderId },
         data: { settings: updatedSettings },
       });
-      
+
       currentSettings.weeklyFeeStatus = 'PAID';
       currentSettings.feeDueDate = feeDueDate;
     }
@@ -489,6 +498,10 @@ export const settleWeeklyFee = async (
 ): Promise<void> => {
   try {
     const riderId = req.user?.id;
+    if (!riderId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
     const { referenceCode } = req.body;
 
     if (!referenceCode || referenceCode.trim().length !== 13 || isNaN(Number(referenceCode))) {
@@ -549,15 +562,60 @@ export const getSystemSettings = async (
   try {
     const settingsFile = path.join(process.cwd(), 'system-settings.json');
     let settings = { gcashNumber: '0912-345-6789', gcashQrCode: '' };
-    
+
     if (fs.existsSync(settingsFile)) {
       const fileData = fs.readFileSync(settingsFile, 'utf8');
       settings = JSON.parse(fileData);
     }
-    
+
     res.status(200).json({
       success: true,
       data: settings,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const savePushToken = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      res.status(400).json({ success: false, error: 'Push token is required.' });
+      return;
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized.' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { settings: true },
+    });
+
+    const currentSettings = (user?.settings as any) || {};
+    const updatedSettings = {
+      ...currentSettings,
+      expoPushToken: token,
+    };
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        settings: updatedSettings,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Push token saved successfully.',
     });
   } catch (err) {
     next(err);

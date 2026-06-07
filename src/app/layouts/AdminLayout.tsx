@@ -10,7 +10,8 @@ import {
   X,
   Bell,
   DollarSign,
-  MessageSquare
+  MessageSquare,
+  Settings
 } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
@@ -86,6 +87,11 @@ export const AdminLayout: React.FC = () => {
       label: 'Support Chats',
       path: '/admin/support',
       icon: <MessageSquare className="w-5 h-5" />,
+    },
+    {
+      label: 'System Settings',
+      path: '/admin/settings',
+      icon: <Settings className="w-5 h-5" />,
     }
   ];
 

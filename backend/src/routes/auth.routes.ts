@@ -12,6 +12,7 @@ import {
   getWeeklyFeeStatus,
   settleWeeklyFee,
   getSystemSettings,
+  savePushToken,
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 
@@ -27,6 +28,7 @@ router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfile);
 router.get('/settings', authenticate, getSettings);
 router.put('/settings', authenticate, updateSettings);
+router.post('/push-token', authenticate, savePushToken);
 router.post('/change-password', authenticate, changePassword);
 router.delete('/delete-account', authenticate, deleteAccount);
 router.get('/weekly-fee-status', authenticate, getWeeklyFeeStatus);

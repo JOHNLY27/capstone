@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Check, 
-  X, 
-  Clock, 
-  ThumbsUp, 
-  DollarSign, 
-  Smartphone, 
+import {
+  Check,
+  X,
+  Clock,
+  ThumbsUp,
+  DollarSign,
+  Smartphone,
   AlertCircle,
   QrCode,
   Save,
@@ -102,9 +102,9 @@ export const WithdrawalApprovalsPage: React.FC = () => {
         },
         body: JSON.stringify({ status })
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to update withdrawal status.');
       }
@@ -140,7 +140,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
       alert('GCash Mobile Number is required.');
       return;
     }
-    
+
     setIsSavingSettings(true);
     try {
       const token = localStorage.getItem('token');
@@ -155,7 +155,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
           gcashQrCode
         })
       });
-      
+
       const data = await response.json();
       if (response.ok && data.success) {
         alert('GCash platform credentials updated successfully!');
@@ -182,7 +182,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
   }
 
   const pendingWithdrawals = withdrawals.filter(w => w.status === 'PENDING');
- 
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
       {/* Header Banner */}
@@ -198,7 +198,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
 
       {/* Grid Layout: Config panel and Table list */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-        
+
         {/* Official Payment Config - Left Column (1/3) */}
         <div className="lg:col-span-1 bg-[#111827]/40 border border-gray-800/40 rounded-2xl p-6 backdrop-blur-md space-y-6">
           <div className="flex items-center gap-3 mb-2 border-b border-gray-800/50 pb-4">
@@ -231,13 +231,13 @@ export const WithdrawalApprovalsPage: React.FC = () => {
               <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest block">
                 Official QR Code Image
               </label>
-              
+
               <div className="flex flex-col items-center justify-center p-4 bg-[#0E131F]/50 border border-gray-850 rounded-xl min-h-[220px]">
                 {gcashQrCode ? (
                   <div className="relative group">
-                    <img 
-                      src={gcashQrCode} 
-                      alt="Official GCash QR" 
+                    <img
+                      src={gcashQrCode}
+                      alt="Official GCash QR"
                       className="w-44 h-44 object-contain rounded-lg border border-gray-850 bg-white p-1"
                     />
                     <button
@@ -265,11 +265,11 @@ export const WithdrawalApprovalsPage: React.FC = () => {
                 <label className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-gray-800/40 hover:bg-gray-800 text-gray-300 rounded-xl border border-gray-700/50 font-bold text-xs transition-colors cursor-pointer text-center">
                   <ImageIcon className="w-4 h-4 text-indigo-400" />
                   <span>{gcashQrCode ? 'Change QR Image' : 'Select QR Image'}</span>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    onChange={handleImageChange} 
-                    className="hidden" 
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    className="hidden"
                   />
                 </label>
               </div>
@@ -301,7 +301,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
               Pending Dues Settlements ({pendingWithdrawals.length})
             </h3>
           </div>
-   
+
           {pendingWithdrawals.length === 0 ? (
             <div className="h-96 flex flex-col items-center justify-center text-center p-8 bg-gray-900/10 border border-dashed border-gray-800 rounded-xl">
               <ThumbsUp className="w-12 h-12 text-indigo-400/80 mb-3 animate-bounce" />
@@ -325,7 +325,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
                   {pendingWithdrawals.map((withdraw) => {
                     const isWeeklyFee = withdraw.description.toLowerCase().includes('weekly') || withdraw.description.toLowerCase().includes('platform');
                     const label = isWeeklyFee ? 'Weekly Platform Dues' : 'Rider Settlement';
-                    
+
                     return (
                       <tr key={withdraw.id} className="text-sm text-gray-300 hover:bg-gray-800/15 transition-colors">
                         <td className="py-4 px-4">
@@ -378,7 +378,7 @@ export const WithdrawalApprovalsPage: React.FC = () => {
                               <Check className="w-3.5 h-3.5" />
                               <span>Approve Payment</span>
                             </button>
-                            
+
                             <button
                               disabled={actioningId !== null}
                               onClick={() => handleVerify(withdraw.id, 'REJECTED', withdraw.user?.name, withdraw.amount)}

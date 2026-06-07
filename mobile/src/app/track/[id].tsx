@@ -5,18 +5,16 @@ import {
   View, 
   TouchableOpacity, 
   ScrollView, 
-  Dimensions,
   ActivityIndicator,
   Alert,
   Modal,
   TextInput,
-  Linking,
-  Platform
+  Linking
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { 
   Bike, Phone, MessageSquare, MapPin, ArrowLeft, 
-  Clock, Package, Star, Shield, CircleDot, CheckCircle, Heart
+  Clock, Package, Star, Shield, CircleDot, CheckCircle, Heart, XCircle
 } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,8 +28,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { authStore } from '../../utils/auth-store';
 import { API_URL } from '../../constants/api';
+import LiveTrackingMap from '../../components/LiveTrackingMap';
+import { getSocket } from '../../utils/socket';
 
-const { width } = Dimensions.get('window');
+
 
 const STATUS_STEPS = [
   { key: 'confirmed', label: 'Errand Placed', description: 'Your request has been registered' },
@@ -62,6 +62,8 @@ export default function TrackOrderScreen() {
   const [order, setOrder] = useState<any>(null);
   const [favoritesList, setFavoritesList] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [riderCoords, setRiderCoords] = useState<{ latitude: number; longitude: number; bearing?: number } | null>(null);
 
   // Rating states
   const [showRateModal, setShowRateModal] = useState(false);
@@ -197,7 +199,15 @@ export default function TrackOrderScreen() {
       const resData = await response.json();
 
       if (response.ok && resData.success) {
-        setOrder(resData.data.order);
+        const ord = resData.data.order;
+        setOrder(ord);
+        if (ord.rider && ord.rider.location) {
+          setRiderCoords({
+            latitude: ord.rider.location.latitude,
+            longitude: ord.rider.location.longitude,
+            bearing: ord.rider.location.bearing || 0
+          });
+        }
       }
     } catch (err) {
       console.error('Error fetching tracker details:', err);
@@ -206,12 +216,91 @@ export default function TrackOrderScreen() {
     }
   };
 
+  const handleCancelOrder = async () => {
+    Alert.alert(
+      "Cancel Order?",
+      "Are you sure you want to cancel this errand/ride request?",
+      [
+        { text: "No", style: "cancel" },
+        { 
+          text: "Yes, Cancel", 
+          style: "destructive",
+          onPress: async () => {
+            setIsCancelling(true);
+            const token = authStore.getToken();
+            try {
+              const response = await fetch(`${API_URL}/api/orders/${orderId}/cancel`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({}),
+              });
+              const responseText = await response.text();
+              let resData: any;
+              try {
+                resData = JSON.parse(responseText);
+              } catch {
+                Alert.alert('Error', `Server returned invalid response (non-JSON): ${responseText.slice(0, 150)}`);
+                return;
+              }
+              if (response.ok && resData.success) {
+                Alert.alert('Success', 'Order cancelled successfully.');
+                fetchOrderDetails();
+              } else {
+                Alert.alert('Error', resData.error || 'Failed to cancel order.');
+              }
+            } catch (e) {
+              console.error('Error cancelling order:', e);
+              Alert.alert('Error', 'Unable to reach the server.');
+            } finally {
+              setIsCancelling(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   useEffect(() => {
-    fetchFavorites();
-    fetchOrderDetails();
+    setTimeout(() => {
+      fetchFavorites();
+      fetchOrderDetails();
+    }, 0);
     // Poll every 5 seconds for real-time tracking updates
     const interval = setInterval(fetchOrderDetails, 5000);
     return () => clearInterval(interval);
+  }, [orderId]);
+
+  // Connect to live updates via Socket.io
+  useEffect(() => {
+    if (!orderId) return;
+
+    const socket = getSocket();
+    socket.emit('join_order_channel', { orderId });
+    console.log(`🔌 [TrackOrder] Joined order channel for ${orderId}`);
+
+    const handleLocationUpdate = (data: {
+      riderId: string;
+      latitude: number;
+      longitude: number;
+      bearing?: number;
+    }) => {
+      console.log('🔌 [TrackOrder] Live rider coordinates received:', data);
+      setRiderCoords({
+        latitude: data.latitude,
+        longitude: data.longitude,
+        bearing: data.bearing || 0
+      });
+    };
+
+    socket.on('rider_location_updated', handleLocationUpdate);
+
+    return () => {
+      socket.off('rider_location_updated', handleLocationUpdate);
+      console.log('🔌 [TrackOrder] Unregistered rider location updates listener');
+    };
   }, [orderId]);
 
   if (isLoading) {
@@ -282,10 +371,16 @@ export default function TrackOrderScreen() {
             <Text style={styles.headerTitle}>Track Order</Text>
             <Text style={styles.headerSubtitle}>Order #{order.id.slice(0, 8).toUpperCase()} • {serviceLabel}</Text>
           </View>
-          <View style={styles.etaBadge}>
-            <Clock size={12} color="#D4AF37" />
-            <Text style={styles.etaBadgeText}>
-              {order.status === 'PENDING' ? 'Finding rider...' : 'Active'}
+          <View style={[
+            styles.etaBadge,
+            order.status === 'CANCELLED' && { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.3)' }
+          ]}>
+            <Clock size={12} color={order.status === 'CANCELLED' ? '#EF4444' : '#D4AF37'} />
+            <Text style={[
+              styles.etaBadgeText,
+              order.status === 'CANCELLED' && { color: '#EF4444' }
+            ]}>
+              {order.status === 'CANCELLED' ? 'Cancelled' : order.status === 'PENDING' ? 'Finding rider...' : 'Active'}
             </Text>
           </View>
         </View>
@@ -296,60 +391,38 @@ export default function TrackOrderScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {order.status === 'CANCELLED' && (
+          <View style={styles.cancelledBanner}>
+            <XCircle size={20} color="#FFFFFF" />
+            <Text style={styles.cancelledBannerText}>ORDER CANCELLED</Text>
+          </View>
+        )}
         {/* Live Map Visualization */}
         <View style={styles.mapCard}>
           <View style={styles.mapInner}>
-            {/* Grid lines for streets */}
-            <View style={styles.mapGrid}>
-              <View style={[styles.gridH, { top: '25%' }]} />
-              <View style={[styles.gridH, { top: '50%' }]} />
-              <View style={[styles.gridH, { top: '75%' }]} />
-              <View style={[styles.gridV, { left: '20%' }]} />
-              <View style={[styles.gridV, { left: '50%' }]} />
-              <View style={[styles.gridV, { left: '80%' }]} />
-            </View>
-
-            {/* River visual */}
-            <View style={styles.river} />
-
-            {/* Store Pin */}
-            <View style={[styles.pin, { top: '20%', left: '22%' }]}>
-              <View style={[styles.pinDot, { backgroundColor: '#0047AB' }]}>
-                <Package size={12} color="#FFF" />
+            {order.pickupCoords && order.dropoffCoords ? (
+              <LiveTrackingMap
+                pickupCoords={
+                  typeof order.pickupCoords === 'string'
+                    ? JSON.parse(order.pickupCoords)
+                    : order.pickupCoords
+                }
+                dropoffCoords={
+                  typeof order.dropoffCoords === 'string'
+                    ? JSON.parse(order.dropoffCoords)
+                    : order.dropoffCoords
+                }
+                riderCoords={riderCoords}
+              />
+            ) : (
+              <View style={styles.mapGrid}>
+                <View style={[styles.gridH, { top: '50%' }]} />
+                <View style={[styles.gridV, { left: '50%' }]} />
+                <Text style={{ position: 'absolute', alignSelf: 'center', top: '45%', color: '#9CA3AF' }}>
+                  No coordinates available
+                </Text>
               </View>
-              <View style={styles.pinLabel}>
-                <Text style={styles.pinText}>Start</Text>
-              </View>
-            </View>
-
-            {/* Customer Pin */}
-            <View style={[styles.pin, { bottom: '18%', right: '15%' }]}>
-              <View style={[styles.pinDot, { backgroundColor: '#10B981' }]}>
-                <MapPin size={12} color="#FFF" />
-              </View>
-              <View style={styles.pinLabel}>
-                <Text style={styles.pinText}>You</Text>
-              </View>
-            </View>
-
-            {/* Rider Pin (animated) */}
-            {order.rider && (
-              <Animated.View style={[
-                styles.pin, 
-                { top: '42%', left: '40%' },
-                riderDotStyle
-              ]}>
-                <View style={[styles.pinDot, styles.riderPinDot]}>
-                  <Bike size={14} color="#050A18" />
-                </View>
-                <View style={[styles.pinLabel, styles.riderPinLabel]}>
-                  <Text style={[styles.pinText, { color: '#D4AF37' }]}>{order.rider.name}</Text>
-                </View>
-              </Animated.View>
             )}
-
-            {/* Route line (dashed) */}
-            <View style={styles.routeLine} />
           </View>
         </View>
 
@@ -420,105 +493,139 @@ export default function TrackOrderScreen() {
         </View>
 
         {/* Rider Info Card */}
-        {order.rider ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>YOUR RIDER</Text>
-            <View style={styles.riderSection}>
-              {/* Rider avatar + info */}
-              <View style={styles.riderRow}>
-                <View style={styles.riderAvatar}>
-                  <Bike size={24} color="#D4AF37" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={styles.riderName}>{order.rider.name}</Text>
-                    <TouchableOpacity 
-                      activeOpacity={0.7}
-                      onPress={() => toggleFavoriteRider(order.rider.id)}
-                    >
-                      <Heart 
-                        size={16} 
-                        color={favoritesList.includes(order.rider.id) ? "#EF4444" : "#9CA3AF"} 
-                        fill={favoritesList.includes(order.rider.id) ? "#EF4444" : "transparent"}
-                      />
-                    </TouchableOpacity>
+        {order.status !== 'CANCELLED' && (
+          order.rider ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>YOUR RIDER</Text>
+              <View style={styles.riderSection}>
+                {/* Rider avatar + info */}
+                <View style={styles.riderRow}>
+                  <View style={styles.riderAvatar}>
+                    <Bike size={24} color="#D4AF37" />
                   </View>
-                  <View style={styles.riderMeta}>
-                    <Star size={12} color="#D4AF37" fill="#D4AF37" />
-                    <Text style={styles.riderRating}>{parseFloat(order.rider.rating || '5').toFixed(1)}</Text>
-                    <Text style={styles.riderTrips}>• {order.rider.ratingsCount || '10'} trips</Text>
-                  </View>
-                  <Text style={styles.riderVehicle}>
-                    {order.rider.riderDocuments?.[0]?.vehicleModel || 'Motorcycle'} • {order.rider.riderDocuments?.[0]?.plateNumber || 'Verified'}
-                  </Text>
-                </View>
-                <View style={styles.verifiedBadge}>
-                  <Shield size={14} color="#10B981" />
-                  <Text style={styles.verifiedText}>Verified</Text>
-                </View>
-              </View>
-
-              {/* Rating or Contact buttons */}
-              {order.status === 'COMPLETED' ? (
-                <View style={styles.ratingInfoContainer}>
-                  {details.isRated ? (
-                    <View style={styles.ratedBanner}>
-                      <Star size={16} color="#10B981" fill="#10B981" />
-                      <Text style={styles.ratedBannerText}>
-                        You rated this pilot {details.riderRating}.0 ★
-                      </Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Text style={styles.riderName}>{order.rider.name}</Text>
+                      <TouchableOpacity 
+                        activeOpacity={0.7}
+                        onPress={() => toggleFavoriteRider(order.rider.id)}
+                      >
+                        <Heart 
+                          size={16} 
+                          color={favoritesList.includes(order.rider.id) ? "#EF4444" : "#9CA3AF"} 
+                          fill={favoritesList.includes(order.rider.id) ? "#EF4444" : "transparent"}
+                        />
+                      </TouchableOpacity>
                     </View>
-                  ) : (
-                    <TouchableOpacity 
-                      style={styles.rateButton}
-                      activeOpacity={0.8}
-                      onPress={() => setShowRateModal(true)}
-                    >
-                      <Star size={18} color="#FFFFFF" fill="#FFFFFF" />
-                      <Text style={styles.rateButtonText}>Rate & Review Rider</Text>
-                    </TouchableOpacity>
-                  )}
+                    <View style={styles.riderMeta}>
+                      <Star size={12} color="#D4AF37" fill="#D4AF37" />
+                      <Text style={styles.riderRating}>{parseFloat(order.rider.rating || '5').toFixed(1)}</Text>
+                      <Text style={styles.riderTrips}>• {order.rider.ratingsCount || '10'} trips</Text>
+                    </View>
+                    <Text style={styles.riderVehicle}>
+                      {order.rider.riderDocuments?.[0]?.vehicleModel || 'Motorcycle'} • {order.rider.riderDocuments?.[0]?.plateNumber || 'Verified'}
+                    </Text>
+                  </View>
+                  <View style={styles.verifiedBadge}>
+                    <Shield size={14} color="#10B981" />
+                    <Text style={styles.verifiedText}>Verified</Text>
+                  </View>
                 </View>
-              ) : (
-                <View style={styles.contactRow}>
-                  <TouchableOpacity 
-                    style={styles.callButton} 
-                    activeOpacity={0.8}
-                    onPress={() => {
-                      if (order.rider?.phone) {
-                        Linking.openURL(`tel:${order.rider.phone}`);
-                      } else {
-                        Alert.alert('Notice', 'No phone details available.');
-                      }
-                    }}
-                  >
-                    <Phone size={18} color="#0047AB" />
-                    <Text style={styles.callText}>Call Rider</Text>
-                  </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.chatButton} 
-                    activeOpacity={0.8}
-                    onPress={() => router.push(`/chat/${order.id}` as any)}
+                {/* Rating or Contact buttons */}
+                {order.status === 'COMPLETED' ? (
+                  <View style={styles.ratingInfoContainer}>
+                    {details.isRated ? (
+                      <View style={styles.ratedBanner}>
+                        <Star size={16} color="#10B981" fill="#10B981" />
+                        <Text style={styles.ratedBannerText}>
+                          You rated this pilot {details.riderRating}.0 ★
+                        </Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity 
+                        style={styles.rateButton}
+                        activeOpacity={0.8}
+                        onPress={() => setShowRateModal(true)}
+                      >
+                        <Star size={18} color="#FFFFFF" fill="#FFFFFF" />
+                        <Text style={styles.rateButtonText}>Rate & Review Rider</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  <View style={{ gap: 12 }}>
+                    <View style={styles.contactRow}>
+                      <TouchableOpacity 
+                        style={styles.callButton} 
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          if (order.rider?.phone) {
+                            Linking.openURL(`tel:${order.rider.phone}`);
+                          } else {
+                            Alert.alert('Notice', 'No phone details available.');
+                          }
+                        }}
+                      >
+                        <Phone size={18} color="#0047AB" />
+                        <Text style={styles.callText}>Call Rider</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity 
+                        style={styles.chatButton} 
+                        activeOpacity={0.8}
+                        onPress={() => router.push(`/chat/${order.id}` as any)}
+                      >
+                        <MessageSquare size={18} color="#FFFFFF" />
+                        <Text style={styles.chatText}>Chat</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {order.status === 'ACCEPTED' && (
+                      <TouchableOpacity
+                        style={styles.cancelRiderButton}
+                        onPress={handleCancelOrder}
+                        disabled={isCancelling}
+                        activeOpacity={0.8}
+                      >
+                        {isCancelling ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.cancelRiderButtonText}>Cancel Order</Text>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>YOUR RIDER</Text>
+              <View style={styles.findingRiderBox}>
+                <Animated.View style={pulseStyle}>
+                  <Bike size={32} color="#0047AB" />
+                </Animated.View>
+                <Text style={styles.findingTitle}>Finding Your Rider...</Text>
+                <Text style={styles.findingDesc}>{"We're matching you with the best available rider nearby. This usually takes 1-3 minutes."}</Text>
+                
+                {order.status === 'PENDING' && (
+                  <TouchableOpacity
+                    style={styles.cancelButtonInline}
+                    onPress={handleCancelOrder}
+                    disabled={isCancelling}
+                    activeOpacity={0.7}
                   >
-                    <MessageSquare size={18} color="#FFFFFF" />
-                    <Text style={styles.chatText}>Chat</Text>
+                    {isCancelling ? (
+                      <ActivityIndicator size="small" color="#EF4444" />
+                    ) : (
+                      <Text style={styles.cancelButtonInlineText}>Cancel Order Request</Text>
+                    )}
                   </TouchableOpacity>
-                </View>
-              )}
+                )}
+              </View>
             </View>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>YOUR RIDER</Text>
-            <View style={styles.findingRiderBox}>
-              <Animated.View style={pulseStyle}>
-                <Bike size={32} color="#0047AB" />
-              </Animated.View>
-              <Text style={styles.findingTitle}>Finding Your Rider...</Text>
-              <Text style={styles.findingDesc}>We're matching you with the best available rider nearby. This usually takes 1-3 minutes.</Text>
-            </View>
-          </View>
+          )
         )}
 
         {/* Order Details Card */}
@@ -1316,5 +1423,65 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  cancelButtonInline: {
+    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButtonInlineText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#EF4444',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  cancelRiderButton: {
+    width: '100%',
+    backgroundColor: '#EF4444',
+    borderRadius: 14,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  cancelRiderButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  cancelledBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  cancelledBannerText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 1,
+    fontStyle: 'italic',
   },
 });

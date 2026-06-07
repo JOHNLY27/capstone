@@ -4,7 +4,7 @@ import { prisma } from '../utils/db.js';
 import { User } from '@prisma/client';
 
 export interface AuthenticatedRequest extends Request {
-  user?: Omit<User, 'passwordHash'>;
+  user?: Omit<User, 'passwordHash' | 'settings'>;
 }
 
 interface DecodedToken {

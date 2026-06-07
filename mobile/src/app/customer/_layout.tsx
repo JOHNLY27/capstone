@@ -4,11 +4,13 @@ import { Home, Package, History, Wallet, User, MessageSquare } from 'lucide-reac
 import { authStore } from '../../utils/auth-store';
 import { persistentStorage } from '../../utils/persistent-storage';
 import { API_URL } from '../../constants/api';
+import { settingsStore } from '../../utils/settings-store';
 
 export default function CustomerTabsLayout() {
   const [badgeCount, setBadgeCount] = useState<number>(0);
 
   useEffect(() => {
+    settingsStore.loadSettings();
     const checkUnreadChats = async () => {
       const token = authStore.getToken();
       const user = authStore.getUser();

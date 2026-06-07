@@ -1,12 +1,46 @@
 import { Response, NextFunction } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 import { getIOInstance } from '../services/socket.service.js';
+import { sendPushNotification } from '../services/notification.service.js';
 
-// Simple delivery fee calculator: 50 PHP base + 10 PHP per km
-const calculateDeliveryFee = (distanceKm: number): number => {
-  const baseFee = 50.00;
-  const perKmFee = 10.00;
+// Dynamic delivery fee calculator based on system-settings.json rates
+const calculateDeliveryFee = (distanceKm: number, type: string, details?: any): number => {
+  let baseFee = 50.00;
+  let perKmFee = 10.00;
+
+  try {
+    const settingsFile = path.join(process.cwd(), 'system-settings.json');
+    if (fs.existsSync(settingsFile)) {
+      const fileData = fs.readFileSync(settingsFile, 'utf8');
+      const settings = JSON.parse(fileData);
+      if (settings && settings.fares) {
+        let fareKey = type;
+        if (details?.rideService === true || details?.rideService === 'true') {
+          fareKey = details.vehicleType || 'Motorcycle';
+        }
+        const rate = settings.fares[fareKey];
+        if (rate) {
+          baseFee = Number(rate.baseFee ?? rate.base ?? baseFee);
+          perKmFee = Number(rate.perKmFee ?? rate.perKm ?? perKmFee);
+        } else {
+          // Key-specific fallback defaults if rate is not set
+          if (fareKey === 'Bao-Bao') {
+            baseFee = 60.00;
+            perKmFee = 12.00;
+          } else if (fareKey === '4-wheels') {
+            baseFee = 100.00;
+            perKmFee = 20.00;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error reading dynamic fares from system-settings.json:', err);
+  }
+
   return Number((baseFee + distanceKm * perKmFee).toFixed(2));
 };
 
@@ -29,7 +63,7 @@ export const createOrder = async (
       return;
     }
 
-    const deliveryFee = calculateDeliveryFee(estimatedDistance);
+    const deliveryFee = calculateDeliveryFee(estimatedDistance, type, details);
     const itemCost = price ? Number(price) : 0.00;
     const totalCost = deliveryFee + itemCost;
     const paymentMethod = details?.paymentMethod || req.body.paymentMethod || 'WALLET';
@@ -199,6 +233,14 @@ export const acceptOrder = async (
       io.emit('order_claimed', { orderId }); // Inform other riders it is no longer available
     }
 
+    // Trigger push notification to the customer
+    sendPushNotification(
+      updatedOrder.customerId,
+      'Order Accepted! 🏍️',
+      `Pilot ${updatedOrder.rider?.name || 'partner'} has accepted your ${updatedOrder.type.toLowerCase()} request.`,
+      { orderId, type: 'order_status', status: 'ACCEPTED' }
+    ).catch(err => console.error('Failed to send order accept push:', err));
+
     res.status(200).json({
       success: true,
       data: { order: updatedOrder },
@@ -337,6 +379,15 @@ export const updateOrderStatus = async (
         io.to(`order_${orderId}`).emit('order_status_updated', updatedOrder);
       }
 
+      if (updatedOrder) {
+        sendPushNotification(
+          updatedOrder.customerId,
+          'Order Completed! 🎉',
+          `Your order #${orderId.slice(0, 8)} has been completed. Thank you for using our service!`,
+          { orderId: updatedOrder.id, type: 'order_status', status: 'COMPLETED' }
+        ).catch(err => console.error('Failed to send order completed push:', err));
+      }
+
       res.status(200).json({
         success: true,
         data: { order: updatedOrder },
@@ -359,6 +410,19 @@ export const updateOrderStatus = async (
     if (io) {
       io.to(`order_${orderId}`).emit('order_status_updated', updatedOrder);
     }
+
+    let pushTitle = 'Order Update';
+    let pushBody = `Your order status has been updated to ${status}.`;
+    if (status === 'IN_TRANSIT') {
+      pushTitle = 'Order in Transit! 🚚';
+      pushBody = `Pilot ${updatedOrder.rider?.name || 'partner'} is now on the way to your destination.`;
+    }
+    sendPushNotification(
+      updatedOrder.customerId,
+      pushTitle,
+      pushBody,
+      { orderId, type: 'order_status', status }
+    ).catch(err => console.error('Failed to send order update push:', err));
 
     res.status(200).json({
       success: true,
@@ -434,7 +498,22 @@ export const getOrderDetails = async (
       where: { id },
       include: {
         customer: { select: { id: true, name: true, phone: true, avatar: true } },
-        rider: { select: { id: true, name: true, phone: true, avatar: true } },
+        rider: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            location: {
+              select: {
+                latitude: true,
+                longitude: true,
+                bearing: true,
+                updatedAt: true,
+              },
+            },
+          },
+        },
         chatMessages: {
           orderBy: { createdAt: 'asc' },
         },
@@ -510,6 +589,14 @@ export const sendChatMessage = async (
     if (io) {
       io.to(`order_${orderId}`).emit('chat_message_received', chatMessage);
     }
+
+    const senderName = req.user?.name || 'Partner';
+    sendPushNotification(
+      receiverId,
+      `New message from ${senderName} 💬`,
+      message.trim(),
+      { orderId, type: 'chat_message', senderId }
+    ).catch(err => console.error('Failed to send chat message push:', err));
 
     res.status(201).json({
       success: true,
@@ -611,4 +698,79 @@ export const rateOrderRider = async (
     next(err);
   }
 };
+
+export const cancelOrder = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id: orderId } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      res.status(404).json({ success: false, error: 'Order not found.' });
+      return;
+    }
+
+    // Check if the user is the customer who placed this order
+    if (order.customerId !== userId) {
+      res.status(403).json({ success: false, error: 'You are not authorized to cancel this order.' });
+      return;
+    }
+
+    // Check if the order is in a state that can be cancelled
+    if (order.status !== 'PENDING' && order.status !== 'ACCEPTED') {
+      res.status(400).json({
+        success: false,
+        error: `This order cannot be cancelled because its current status is ${order.status}.`,
+      });
+      return;
+    }
+
+    // Update order status to CANCELLED
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: { status: 'CANCELLED' },
+      include: {
+        customer: { select: { id: true, name: true, phone: true, avatar: true } },
+        rider: { select: { id: true, name: true, phone: true, avatar: true } },
+      },
+    });
+
+    // Notify rooms via Socket.io if active
+    const io = getIOInstance();
+    if (io) {
+      io.to(`order_${orderId}`).emit('order_status_updated', updatedOrder);
+      io.emit('order_cancelled', { orderId });
+    }
+
+    if (updatedOrder.riderId) {
+      sendPushNotification(
+        updatedOrder.riderId,
+        'Order Cancelled 🚫',
+        `Order #${orderId.slice(0, 8)} has been cancelled by the customer.`,
+        { orderId, type: 'order_status', status: 'CANCELLED' }
+      ).catch(err => console.error('Failed to send order cancel push:', err));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Order has been successfully cancelled.',
+      data: { order: updatedOrder },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 
