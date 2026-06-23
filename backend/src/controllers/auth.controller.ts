@@ -6,6 +6,7 @@ import path from 'path';
 import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 import { sendPushNotification } from '../services/notification.service.js';
+import { sendPasswordResetEmail, sendSignupVerificationEmail } from '../services/email.service.js';
 
 const signToken = (id: string, role: string): string => {
   const secret = process.env.JWT_SECRET || 'supabase-capstone-secret-jwt-key-2026';
@@ -20,10 +21,23 @@ export const registerCustomer = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { name, email, password, phone } = req.body;
+    const { name, email, password, phone, code, signupToken } = req.body;
 
-    if (!name || !email || !password || !phone) {
-      res.status(400).json({ success: false, error: 'Please provide all required fields.' });
+    if (!name || !email || !password || !phone || !code || !signupToken) {
+      res.status(400).json({ success: false, error: 'Please provide all required fields, including verification code.' });
+      return;
+    }
+
+    // Verify signup token
+    const secret = process.env.JWT_SECRET || 'supabase-capstone-secret-jwt-key-2026';
+    try {
+      const decoded = jwt.verify(signupToken, secret) as { email: string; code: string };
+      if (decoded.email.toLowerCase() !== email.trim().toLowerCase() || decoded.code !== code.trim()) {
+        res.status(400).json({ success: false, error: 'Invalid or incorrect verification code.' });
+        return;
+      }
+    } catch (err) {
+      res.status(400).json({ success: false, error: 'Verification code has expired or is invalid. Please request a new one.' });
       return;
     }
 
@@ -88,13 +102,26 @@ export const registerRider = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { name, email, password, phone, licenseNumber, plateNumber, vehicleModel, licenseImage, clearanceImage } = req.body;
+    const { name, email, password, phone, licenseNumber, plateNumber, vehicleModel, licenseImage, clearanceImage, code, signupToken } = req.body;
 
-    if (!name || !email || !password || !phone || !licenseNumber || !plateNumber || !vehicleModel) {
+    if (!name || !email || !password || !phone || !licenseNumber || !plateNumber || !vehicleModel || !code || !signupToken) {
       res.status(400).json({
         success: false,
-        error: 'Please provide all user profile and vehicle registration fields.',
+        error: 'Please provide all required fields, including verification code.',
       });
+      return;
+    }
+
+    // Verify signup token
+    const secret = process.env.JWT_SECRET || 'supabase-capstone-secret-jwt-key-2026';
+    try {
+      const decoded = jwt.verify(signupToken, secret) as { email: string; code: string };
+      if (decoded.email.toLowerCase() !== email.trim().toLowerCase() || decoded.code !== code.trim()) {
+        res.status(400).json({ success: false, error: 'Invalid or incorrect verification code.' });
+        return;
+      }
+    } catch (err) {
+      res.status(400).json({ success: false, error: 'Verification code has expired or is invalid. Please request a new one.' });
       return;
     }
 
@@ -322,16 +349,21 @@ export const getSettings = async (
       select: { settings: true },
     });
 
+    const userSettings = (user?.settings as any) || {
+      pushNotifications: true,
+      smsAlerts: false,
+      emailPromos: true,
+      orderUpdates: true,
+      chatMessages: true,
+      dataSharing: true,
+    };
+
+    // Filter out security-sensitive password reset tokens
+    const { resetCode, resetExpires, ...safeSettings } = userSettings;
+
     res.status(200).json({
       success: true,
-      settings: user?.settings || {
-        pushNotifications: true,
-        smsAlerts: false,
-        emailPromos: true,
-        orderUpdates: true,
-        chatMessages: true,
-        dataSharing: true,
-      },
+      settings: safeSettings,
     });
   } catch (err) {
     next(err);
@@ -616,6 +648,184 @@ export const savePushToken = async (
     res.status(200).json({
       success: true,
       message: 'Push token saved successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const forgotPassword = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({ success: false, error: 'Email address is required.' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // Return 200/success anyway to prevent user enumeration security issues,
+      // but only perform action if user exists
+      res.status(200).json({
+        success: true,
+        message: 'If the email is registered on our platform, you will receive a verification code shortly.',
+      });
+      return;
+    }
+
+    // Generate 6-digit code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes validity
+
+    // Update settings in database
+    const currentSettings = (user.settings as any) || {};
+    const updatedSettings = {
+      ...currentSettings,
+      resetCode,
+      resetExpires,
+    };
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { settings: updatedSettings },
+    });
+
+    // Send the email asynchronously
+    sendPasswordResetEmail(email, resetCode).catch((err) => {
+      console.error(`❌ [ForgotPassword] Failed to send email to ${email}:`, err);
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'If the email is registered on our platform, you will receive a verification code shortly.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const resetPassword = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      res.status(400).json({
+        success: false,
+        error: 'Please provide email, 6-digit verification code, and new password.',
+      });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      res.status(400).json({ success: false, error: 'Invalid request details.' });
+      return;
+    }
+
+    const settings = (user.settings as any) || {};
+    const savedCode = settings.resetCode;
+    const expirationStr = settings.resetExpires;
+
+    if (!savedCode || !expirationStr || savedCode !== code.trim()) {
+      res.status(400).json({ success: false, error: 'Invalid or incorrect verification code.' });
+      return;
+    }
+
+    const expiration = new Date(expirationStr);
+    if (expiration < new Date()) {
+      res.status(400).json({ success: false, error: 'Verification code has expired. Please request a new one.' });
+      return;
+    }
+
+    // Hash the new password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    // Clean up verification settings
+    const { resetCode: _, resetExpires: __, ...cleanedSettings } = settings;
+
+    // Update database
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        settings: cleanedSettings,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successful! You can now log in with your new password.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const sendSignupCode = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({ success: false, error: 'Email address is required.' });
+      return;
+    }
+
+    // Check if email already exists in DB
+    const existingUser = await prisma.user.findFirst({
+      where: { email: email.trim().toLowerCase() },
+    });
+
+    if (existingUser) {
+      res.status(400).json({
+        success: false,
+        error: 'A user with this email address already exists.',
+      });
+      return;
+    }
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Send the email using the email service
+    const sent = await sendSignupVerificationEmail(email.trim().toLowerCase(), code);
+    
+    if (!sent) {
+      res.status(500).json({ success: false, error: 'Failed to send verification email. Please try again.' });
+      return;
+    }
+
+    // Sign a temporary token containing email and code
+    const secret = process.env.JWT_SECRET || 'supabase-capstone-secret-jwt-key-2026';
+    const signupToken = jwt.sign(
+      { email: email.trim().toLowerCase(), code },
+      secret,
+      { expiresIn: '5m' } // valid for 5 minutes
+    );
+
+    res.status(200).json({
+      success: true,
+      signupToken,
+      message: 'Verification code sent to your email address.',
     });
   } catch (err) {
     next(err);

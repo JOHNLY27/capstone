@@ -77,7 +77,7 @@ export default function CustomerTabsLayout() {
   }, []);
 
   return (
-    <Tabs screenOptions={{ 
+    <Tabs backBehavior="history" screenOptions={{ 
       headerShown: false, 
       tabBarActiveTintColor: '#0047AB',
       tabBarInactiveTintColor: '#6B7280',

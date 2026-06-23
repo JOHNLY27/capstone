@@ -5,6 +5,7 @@ import { prisma } from '../utils/db.js';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 import { getIOInstance } from '../services/socket.service.js';
 import { sendPushNotification } from '../services/notification.service.js';
+import { sendOrderReceiptEmail } from '../services/email.service.js';
 
 // Dynamic delivery fee calculator based on system-settings.json rates
 const calculateDeliveryFee = (distanceKm: number, type: string, details?: any): number => {
@@ -108,6 +109,14 @@ export const createOrder = async (
     const io = getIOInstance();
     if (io) {
       io.emit('new_order_available', order);
+    }
+
+    // Send order receipt email to customer asynchronously
+    const customerEmail = req.user?.email;
+    if (customerEmail) {
+      sendOrderReceiptEmail(customerEmail, order).catch((err) => {
+        console.error(`❌ [OrderReceipt] Failed to send email to ${customerEmail}:`, err);
+      });
     }
 
     res.status(201).json({

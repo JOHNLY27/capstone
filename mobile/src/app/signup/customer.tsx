@@ -28,6 +28,60 @@ export default function CustomerSignupScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Email verification modal states
+  const [isVerifyModalVisible, setIsVerifyModalVisible] = useState(false);
+  const [signupCode, setSignupCode] = useState('');
+  const [signupToken, setSignupToken] = useState('');
+  const [isVerifyLoading, setIsVerifyLoading] = useState(false);
+
+  const handleVerifyAndRegister = async () => {
+    if (!signupCode || signupCode.trim().length !== 6) {
+      Alert.alert('Validation Error', 'Please enter a valid 6-digit verification code.');
+      return;
+    }
+
+    setIsVerifyLoading(true);
+    const { fullName, email, password, phoneNumber } = formData;
+    try {
+      const response = await fetch(`${API_URL}/api/auth/register/customer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          phone: phoneNumber.trim(),
+          code: signupCode.trim(),
+          signupToken,
+        }),
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Registration failed.');
+      }
+
+      setIsVerifyModalVisible(false);
+      // Save token and user details to memory store
+      authStore.setSession(resData.token, resData.data.user);
+
+      Alert.alert('Success', 'Account created successfully!', [
+        {
+          text: 'Proceed',
+          onPress: () => router.push('/customer'),
+        }
+      ]);
+    } catch (error: any) {
+      console.error('Verify & Register Error:', error);
+      Alert.alert('Verification Failed', error.message || 'Incorrect verification code or registration failed.');
+    } finally {
+      setIsVerifyLoading(false);
+    }
+  };
+
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -46,7 +100,7 @@ export default function CustomerSignupScreen() {
   const barangays = getBarangays(formData.province, formData.city);
 
   const handleSubmit = async () => {
-    const { fullName, email, password, confirmPassword, phoneNumber, barangay, streetPurok } = formData;
+    const { fullName, email, password, confirmPassword, phoneNumber, barangay } = formData;
 
     if (!fullName || !email || !password || !confirmPassword || !phoneNumber || !barangay) {
       Alert.alert('Validation Error', 'Please fill in all required fields.');
@@ -60,36 +114,26 @@ export default function CustomerSignupScreen() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/auth/register/customer`, {
+      const response = await fetch(`${API_URL}/api/auth/send-signup-code`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: fullName.trim(),
           email: email.trim().toLowerCase(),
-          password,
-          phone: phoneNumber.trim(),
         }),
       });
 
       const resData = await response.json();
 
       if (!response.ok) {
-        throw new Error(resData.error || 'Failed to create your customer account.');
+        throw new Error(resData.error || 'Failed to send verification code.');
       }
 
-      // Save token and user details to memory store
-      authStore.setSession(resData.token, resData.data.user);
-
-      Alert.alert('Success', 'Account created successfully!', [
-        {
-          text: 'Proceed',
-          onPress: () => router.push('/customer'),
-        }
-      ]);
+      setSignupToken(resData.signupToken);
+      setIsVerifyModalVisible(true);
     } catch (error: any) {
-      console.error('Customer Registration Error:', error);
+      console.error('Customer Registration send code error:', error);
       Alert.alert('Registration Failed', error.message || 'Unable to connect to server. Please try again.');
     } finally {
       setIsLoading(false);
@@ -362,6 +406,63 @@ export default function CustomerSignupScreen() {
         </View>
       </Modal>
 
+      {/* Signup Verification Modal */}
+      <Modal
+        visible={isVerifyModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsVerifyModalVisible(false)}
+      >
+        <View style={styles.modalOverlayCenter}>
+          <View style={styles.modalContentCenter}>
+            <Text style={styles.modalTitleCenter}>Verify Email</Text>
+            <Text style={styles.modalSubtitleCenter}>
+              We sent a 6-digit verification code to <Text style={{ fontWeight: 'bold' }}>{formData.email.trim()}</Text>. Please enter it below to complete registration:
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Verification Code</Text>
+              <View style={styles.inputWrapper}>
+                <Lock size={20} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 123456"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  maxLength={6}
+                  value={signupCode}
+                  onChangeText={setSignupCode}
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setIsVerifyModalVisible(false);
+                  setSignupCode('');
+                }}
+                disabled={isVerifyLoading}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.modalSubmitBtn, { backgroundColor: '#0047AB' }]}
+                onPress={handleVerifyAndRegister}
+                disabled={isVerifyLoading}
+              >
+                {isVerifyLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalSubmitText}>Verify & Sign Up</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -565,5 +666,72 @@ const styles = StyleSheet.create({
   itemSeparator: {
     height: 1,
     backgroundColor: '#F3F4F6',
+  },
+  modalOverlayCenter: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 10, 24, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContentCenter: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  modalTitleCenter: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#050A18',
+    textTransform: 'uppercase',
+    fontStyle: 'italic',
+    letterSpacing: -0.5,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitleCenter: {
+    fontSize: 13,
+    color: '#4B5563',
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelText: {
+    color: '#4B5563',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalSubmitBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSubmitText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 24,
   },
 });

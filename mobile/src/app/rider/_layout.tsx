@@ -4,7 +4,7 @@ import { Home, Navigation, DollarSign, History, User } from 'lucide-react-native
 
 export default function RiderTabsLayout() {
   return (
-    <Tabs screenOptions={{ 
+    <Tabs backBehavior="history" screenOptions={{ 
       headerShown: false, 
       tabBarActiveTintColor: '#D4AF37',
       tabBarInactiveTintColor: '#6B7280',

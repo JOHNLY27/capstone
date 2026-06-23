@@ -13,6 +13,9 @@ import {
   settleWeeklyFee,
   getSystemSettings,
   savePushToken,
+  forgotPassword,
+  resetPassword,
+  sendSignupCode,
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 
@@ -22,6 +25,9 @@ const router = Router();
 router.post('/register/customer', registerCustomer);
 router.post('/register/rider', registerRider);
 router.post('/login', login);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
+router.post('/send-signup-code', sendSignupCode);
 
 // Private Routes
 router.get('/profile', authenticate, getProfile);
